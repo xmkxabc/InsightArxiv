@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>洞见Arxiv | InsightArxiv</title>
+    <!-- Umami Analytics -->
+    <script async src="https://analytics.umami.is/script.js"
+        data-website-id="ba121631-f1a1-46ba-ba9a-1deb2e94e456"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/@fontsource/inter@latest/index.css" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <style>
+        details[open] > summary svg {
+            transform: rotate(180deg);
+        }
+    </style>
+    
+</head>
+<body class="text-gray-800" data-theme="light">
+    
+<!-- 新增：阅读进度指示器 -->
+<div class="reading-progress">
+    <div class="reading-progress-bar" id="reading-progress-bar"></div>
+</div>
+
+<!-- 新增：带文本的顶部加载进度条 -->
+<div id="progress-container">
+    <div class="flex justify-end"><span id="progress-text"></span></div>
+    <div id="top-loader"><div id="top-loader-bar"></div></div>
+</div>
+
+<div class="container mx-auto px-4 py-8">
+    
+    <header class="text-center mb-4">
+        <div class="flex justify-between items-center mb-4">
+            <div></div>
+            <h1 class="text-4xl font-bold text-gray-900">Arxiv论文每日速览</h1>
+            <button id="theme-toggle" class="theme-toggle" aria-label="切换主题模式" title="切换深色/浅色模式">
+                <svg id="theme-icon-light" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd" />
+                </svg>
+                <svg id="theme-icon-dark" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 hidden" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
+                </svg>
+            </button>
+        </div>
+        <p id="last-updated" class="text-sm text-gray-500 mt-2"></p>
+        
+        <!-- 帮助按钮 -->
+        <div class="flex justify-center items-center gap-4 mt-4">
+            <button id="help-btn" class="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition" title="查看使用帮助">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span class="text-sm font-medium">使用帮助</span>
+            </button>
+            <button id="tutorial-btn" class="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition" title="开始新手教程">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                </svg>
+                <span class="text-sm font-medium">新手教程</span>
+            </button>
+            <button id="settings-btn" class="flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition" title="个人设置">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <span class="text-sm font-medium">个人设置</span>
+            </button>
+            <button id="data-management-btn" class="flex items-center gap-2 px-4 py-2 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-100 transition" title="数据管理">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                </svg>
+                <span class="text-sm font-medium">数据管理</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- 优化：改进快速导航栏HTML结构以获得更好的响应式效果 -->
+    <div id="quick-nav-container" class="sticky top-0 z-20 py-2 mb-8 quick-nav-container">
+        <nav id="quick-nav" class="quick-nav px-4">
+            <!-- 导航内容 -->
+            <div id="mobile-nav-content" class="mobile-nav-content">
+                <!-- 月份导航 -->
+                <div id="month-nav-wrapper" class="mb-4"></div>
+                
+                <!-- 工具栏 -->
+                <div class="flex flex-col gap-3 md:hidden">
+                    <div class="view-toggle">
+                        <button id="view-detailed-btn-mobile">详细视图</button>
+                        <button id="view-compact-btn-mobile">紧凑视图</button>
+                    </div>
+                    <button id="show-favorites-btn-mobile" class="flex items-center justify-center space-x-2 px-3 py-2 bg-yellow-400 text-white font-semibold rounded-lg hover:bg-yellow-500 transition shadow min-h-[44px]">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
+                        <span>我的收藏</span>
+                        <span id="favorites-count-mobile" class="ml-1 bg-white text-yellow-500 text-xs font-bold rounded-full px-1.5 py-0.5"></span>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- 桌面端导航 -->
+            <div class="hidden md:flex justify-between items-center flex-wrap gap-y-2">
+                <!-- 月份导航（左侧，可伸展） -->
+                <div id="month-nav-wrapper-desktop" class="flex-grow"></div>
+                <!-- 工具栏（右侧，固定宽度） -->
+                <div class="flex items-center gap-4 flex-shrink-0">
+                    <div class="view-toggle">
+                        <button id="view-detailed-btn">详细</button>
+                        <button id="view-compact-btn">紧凑</button>
+                    </div>
+                    <div>
+                        <button id="show-favorites-btn" class="flex items-center space-x-2 px-3 py-2 bg-yellow-400 text-white font-semibold rounded-lg hover:bg-yellow-500 transition shadow">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
+                            <span>我的收藏</span><span id="favorites-count" class="ml-1 bg-white text-yellow-500 text-xs font-bold rounded-full px-1.5 py-0.5"></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </nav>
+    </div>
+
+    <div id="search-bar-container" class="search-bar-container">
+        <!-- 首次访问欢迎卡片 -->
+        <div id="welcome-card" class="welcome-card hidden">
+            <h2>欢迎使用 AI 论文每日速览！</h2>
+            <p>探索最新的人工智能研究论文，获取中文AI增强摘要，发现科研前沿动态。</p>
+            <div class="welcome-actions">
+                <button id="start-tutorial" class="welcome-btn welcome-btn-primary">开始新手教程</button>
+                <button id="explore-now" class="welcome-btn welcome-btn-secondary">直接探索</button>
+            </div>
+        </div>
+        
+        <!-- 快速功能访问面板 -->
+        <div id="quick-actions" class="quick-actions hidden">
+            <div class="quick-action-card" data-action="search">
+                <div class="quick-action-icon">🔍</div>
+                <div class="quick-action-title">智能搜索</div>
+                <div class="quick-action-desc">搜索论文标题、作者、关键词或AI摘要</div>
+            </div>
+            <div class="quick-action-card" data-action="categories">
+                <div class="quick-action-icon">📁</div>
+                <div class="quick-action-title">分类浏览</div>
+                <div class="quick-action-desc">按机器学习、计算机视觉等领域分类</div>
+            </div>
+            <div class="quick-action-card" data-action="favorites">
+                <div class="quick-action-icon">⭐</div>
+                <div class="quick-action-title">收藏管理</div>
+                <div class="quick-action-desc">收藏感兴趣的论文，随时回顾</div>
+            </div>
+            <div class="quick-action-card" data-action="timeline">
+                <div class="quick-action-icon">📅</div>
+                <div class="quick-action-title">时间线浏览</div>
+                <div class="quick-action-desc">按日期浏览历史论文数据</div>
+            </div>
+        </div>
+        
+        <!-- 热门关键词展示 -->
+        <div id="popular-keywords" class="popular-keywords hidden">
+            <h4>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                热门关键词
+            </h4>
+            <div class="popular-keywords-list">
+                <span class="popular-keyword" data-keyword="transformer">Transformer</span>
+                <span class="popular-keyword" data-keyword="diffusion">Diffusion</span>
+                <span class="popular-keyword" data-keyword="llm">LLM</span>
+                <span class="popular-keyword" data-keyword="computer vision">Computer Vision</span>
+                <span class="popular-keyword" data-keyword="reinforcement learning">Reinforcement Learning</span>
+                <span class="popular-keyword" data-keyword="neural network">Neural Network</span>
+                <span class="popular-keyword" data-keyword="deep learning">Deep Learning</span>
+                <span class="popular-keyword" data-keyword="generative ai">Generative AI</span>
+            </div>
+        </div>
+        
+        <div class="relative">
+            <!-- 搜索历史按钮 -->
+            <div class="flex items-center gap-2 mb-2">
+                <button id="search-history-toggle" class="text-sm text-gray-600 hover:text-gray-800 font-medium">
+                    搜索历史
+                </button>
+            </div>
+            
+            <!-- 新增：搜索历史面板 -->
+            <div id="search-history-panel" class="search-history hidden">
+                <div class="search-history-title">
+                    <span>搜索历史</span>
+                    <button id="clear-history" class="text-xs text-red-600 hover:text-red-800">清除历史</button>
+                </div>
+                <div id="search-history-items"></div>
+            </div>
+            
+            <!-- 搜索区域和日期筛选 -->
+            <div class="relative flex gap-3 items-center">
+                <div class="relative flex-1">
+                    <input type="text" id="searchInput" placeholder="搜索论文或点击分类/关键词进行筛选..." 
+                           class="w-full p-4 pl-12 pr-24 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
+                           autocomplete="off">
+                    <svg class="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    <button id="clear-search-btn" class="absolute right-12 top-1/2 transform -translate-y-1/2 p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors hidden" title="清除搜索">
+                        <svg class="h-5 w-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                    <button id="date-filter-toggle" class="absolute right-3 top-1/2 transform -translate-y-1/2 p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors" title="日期筛选">
+                        <svg class="h-5 w-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- 日期筛选快捷按钮 -->
+            <div id="date-filter-panel" class="hidden mt-3">
+                <div class="flex flex-wrap gap-2">
+                    <button class="date-quick-filter px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 text-sm hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors" data-period="today">今日</button>
+                    <button class="date-quick-filter px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 text-sm hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors" data-period="yesterday">昨天</button>
+                    <button class="date-quick-filter px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 text-sm hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors" data-period="dayBeforeYesterday">前天</button>
+                    <button class="date-quick-filter px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 text-sm hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors" data-period="week">本周</button>
+                    <button class="date-quick-filter px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 text-sm hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors" data-period="recent3">最近3天</button>
+                    <button class="date-quick-filter px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 text-sm hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors" data-period="recent5">最近5天</button>
+                    <button class="date-quick-filter px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 text-sm hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors" data-period="month">本月</button>
+                    <button class="date-quick-filter px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 text-sm hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors" data-period="custom">自定义</button>
+                </div>
+            </div>
+            
+            <!-- 当前筛选条件显示 -->
+            <div id="active-filters" class="mt-3 hidden">
+                <div class="flex flex-wrap gap-2">
+                    <span class="text-sm text-gray-600 dark:text-gray-400">当前筛选:</span>
+                    <span id="date-filter-display" class="px-2 py-1 bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 rounded-full text-sm hidden">
+                        <span class="date-range-text"></span>
+                        <button class="ml-2 hover:text-blue-600" onclick="clearDateFilter()">&times;</button>
+                    </span>
+                </div>
+            </div>
+
+            <!-- 新增：搜索建议下拉框 -->
+            <div id="search-suggestions" class="search-suggestions">
+                <!-- 动态填充搜索建议 -->
+            </div>
+        </div>
+    </div>
+
+    <!-- 新增：支持的分类列表 -->
+    <div class="my-6">
+        <details id="supported-categories-container" class="category-details bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 shadow-sm">
+            <summary class="category-summary text-base font-semibold text-gray-800 dark:text-gray-200 cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 transition-colors flex justify-between items-center">
+                <span>查看所有支持的论文分类</span>
+                <svg class="w-5 h-5 transform transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+            </summary>
+            <div id="supported-categories-list" class="mt-4 flex flex-wrap gap-2">
+                <!-- Categories will be injected here by JavaScript -->
+            </div>
+        </details>
+    </div>
+
+    <!-- 新增：分类筛选器容器 -->
+    <div id="category-filter-container" class="mb-8 hidden">
+        <div id="category-filters" class="flex items-center gap-2 overflow-x-auto pb-2"></div>
+    </div>
+    
+    <!-- 新增：每日论文分布筛选器 -->
+    <div id="daily-distribution-container" class="mb-4 hidden">
+        <div id="daily-distribution-filters" class="flex items-center gap-2 overflow-x-auto pb-2"></div>
+    </div>
+
+    <main id="main-content">
+        <div id="search-info" class="mb-4 text-lg text-gray-700 hidden"></div>
+        <div id="papers-container"></div>
+        <div id="search-results-container" class="space-y-8 hidden"></div>
+        <div id="skeleton-container" class="space-y-8 hidden"></div>
+    </main>
+
+    <div id="loader" class="flex justify-center items-center py-8 hidden">
+        <div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12"></div>
+    </div>
+
+    <div id="end-of-list-message" class="text-center py-8 text-gray-500 hidden">
+        <p>已加载全部内容</p>
+    </div>
+</div>
+
+<!-- 新增：可访问性优化 -->
+<button id="back-to-top" class="back-to-top-btn hidden md:flex" aria-label="返回顶部" title="返回页面顶部">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" /></svg>
+</button>
+
+<!-- 新增：分享操作的Toast通知 -->
+<div id="toast-notification" class="toast" role="alert"></div>
+
+<!-- 用户引导和教程系统 -->
+<div id="tutorial-overlay" class="tutorial-overlay">
+    <!-- 教程高亮区域 -->
+    <div id="tutorial-highlight" class="tutorial-highlight"></div>
+    
+    <!-- 教程进度指示器 -->
+    <div id="tutorial-progress" class="tutorial-progress">
+        <span id="tutorial-progress-text" class="tutorial-progress-text">步骤 1 / 6</span>
+        <div class="tutorial-progress-bar">
+            <div id="tutorial-progress-fill" class="tutorial-progress-fill"></div>
+        </div>
+    </div>
+    
+    <!-- 教程信息卡片 -->
+    <div id="tutorial-card" class="tutorial-card">
+        <h3 id="tutorial-title">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+            </svg>
+            欢迎使用
+        </h3>
+        <p id="tutorial-content">
+            欢迎来到 AI 论文每日速览！让我们通过简单的教程来了解主要功能。
+        </p>
+        <ul id="tutorial-features" class="feature-list">
+            <li><span class="check-icon">✓</span> 搜索和筛选最新 AI 论文</li>
+            <li><span class="check-icon">✓</span> 查看 AI 增强的中文摘要</li>
+            <li><span class="check-icon">✓</span> 收藏和管理感兴趣的论文</li>
+            <li><span class="check-icon">✓</span> 按分类和时间浏览论文</li>
+        </ul>
+        <div class="tutorial-buttons">
+            <button id="tutorial-skip" class="tutorial-btn tutorial-btn-skip">跳过教程</button>
+            <button id="tutorial-prev" class="tutorial-btn tutorial-btn-secondary">上一步</button>
+            <button id="tutorial-next" class="tutorial-btn tutorial-btn-primary">开始教程</button>
+        </div>
+    </div>
+</div>
+
+<!-- 功能提示气泡 -->
+<div id="feature-tooltip" class="feature-tooltip"></div>
+
+<!-- 首次访问指示器 -->
+<div id="first-visit-indicator" class="first-visit-indicator">
+    🎉 欢迎首次访问！点击右上角的"新手教程"开始了解功能
+</div>
+
+<!-- 新增：移动端底部导航栏 -->
+<div class="mobile-bottom-nav md:hidden">
+    <button id="mobile-nav-home" class="active" data-action="scroll-to-top">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+        </svg>
+        <span>首页</span>
+    </button>
+    
+    <button id="mobile-nav-search" data-action="focus-search">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+        </svg>
+        <span>搜索</span>
+    </button>
+    
+    <button id="mobile-nav-favorites" data-action="show-favorites">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/>
+        </svg>
+        <span>收藏</span>
+        <span id="mobile-favorites-badge" class="mobile-badge">0</span>
+    </button>
+    
+    <button id="mobile-nav-menu" data-action="toggle-mobile-menu">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+        </svg>
+        <span>菜单</span>
+    </button>
+</div>
+
+<!-- 新增：手势操作提示 -->
+<div id="swipe-indicator-left" class="swipe-indicator left">← 上一月</div>
+<div id="swipe-indicator-right" class="swipe-indicator right">下一月 →</div>
+
+<!-- 个性化设置模态框 -->
+<div id="settings-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+        <div class="sticky top-0 bg-white border-b border-gray-200 p-6">
+            <div class="flex justify-between items-center">
+                <h2 class="text-2xl font-bold text-gray-900">个人设置</h2>
+                <button id="close-settings-modal" class="text-gray-400 hover:text-gray-600 transition-colors" title="关闭设置面板" aria-label="关闭设置面板">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        
+        <div class="p-6 space-y-8">
+            <!-- 基础偏好设置 -->
+            <div>
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">基础偏好</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">默认主题</label>
+                        <select id="theme-preference" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" title="选择默认主题" aria-label="选择默认主题">
+                            <option value="light">浅色模式</option>
+                            <option value="dark">深色模式</option>
+                            <option value="system">跟随系统</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">默认视图</label>
+                        <select id="view-preference" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" title="选择默认视图" aria-label="选择默认视图">
+                            <option value="detailed">详细视图</option>
+                            <option value="compact">紧凑视图</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 阅读目标设置 -->
+            <div>
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">阅读目标</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">每日阅读目标（篇）</label>
+                        <input type="number" id="daily-target" min="1" max="50" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="5">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">每周阅读目标（篇）</label>
+                        <input type="number" id="weekly-target" min="1" max="300" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="30">
+                    </div>
+                </div>
+                <div class="mt-4 p-4 bg-blue-50 rounded-lg">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm font-medium text-blue-900">当前连续阅读天数</p>
+                            <p class="text-2xl font-bold text-blue-600" id="current-streak">0 天</p>
+                        </div>
+                        <div>
+                            <p class="text-sm font-medium text-blue-900">最长连续记录</p>
+                            <p class="text-2xl font-bold text-blue-600" id="longest-streak">0 天</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 个性化推荐 -->
+            <div>
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">智能推荐</h3>
+                <div class="space-y-4">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h4 class="text-sm font-medium text-gray-900">启用智能推荐</h4>
+                            <p class="text-sm text-gray-500">基于您的阅读历史和偏好推荐相关论文</p>
+                        </div>
+                        <input type="checkbox" id="recommendation-enabled" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded" title="启用智能推荐" aria-label="启用智能推荐">
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h4 class="text-sm font-medium text-gray-900">显示工具提示</h4>
+                            <p class="text-sm text-gray-500">在功能按钮上显示说明提示</p>
+                        </div>
+                        <input type="checkbox" id="tooltips-enabled" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded" title="显示工具提示" aria-label="显示工具提示">
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h4 class="text-sm font-medium text-gray-900">键盘导航</h4>
+                            <p class="text-sm text-gray-500">启用键盘快捷键操作</p>
+                        </div>
+                        <input type="checkbox" id="keyboard-nav-enabled" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded" title="启用键盘导航" aria-label="启用键盘导航">
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 自定义分类管理 -->
+            <div>
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">自定义分类</h3>
+                <div class="space-y-4">
+                    <div class="flex gap-2">
+                        <input type="text" id="new-category-name" placeholder="分类名称" class="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <input type="text" id="new-category-keywords" placeholder="关键词 (逗号分隔)" class="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <button id="add-custom-category" class="px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">添加</button>
+                    </div>
+                    <div id="custom-categories-list" class="space-y-2 max-h-48 overflow-y-auto">
+                        <!-- 自定义分类列表 -->
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 阅读统计 -->
+            <div>
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">阅读统计</h3>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div class="text-center p-4 bg-green-50 rounded-lg">
+                        <p class="text-2xl font-bold text-green-600" id="total-papers-read">0</p>
+                        <p class="text-sm text-green-800">总阅读数</p>
+                    </div>
+                    <div class="text-center p-4 bg-blue-50 rounded-lg">
+                        <p class="text-2xl font-bold text-blue-600" id="total-favorites">0</p>
+                        <p class="text-sm text-blue-800">收藏数量</p>
+                    </div>
+                    <div class="text-center p-4 bg-purple-50 rounded-lg">
+                        <p class="text-2xl font-bold text-purple-600" id="total-notes">0</p>
+                        <p class="text-sm text-purple-800">笔记数量</p>
+                    </div>
+                    <div class="text-center p-4 bg-orange-50 rounded-lg">
+                        <p class="text-2xl font-bold text-orange-600" id="avg-rating">0.0</p>
+                        <p class="text-sm text-orange-800">平均评分</p>
+                    </div>
+                </div>
+                <div class="mt-4">
+                    <h4 class="text-sm font-medium text-gray-900 mb-2">最常阅读的分类</h4>
+                    <div id="reading-categories-chart" class="space-y-2">
+                        <!-- 分类统计图表 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="sticky bottom-0 bg-gray-50 px-6 py-4 border-t border-gray-200">
+            <div class="flex justify-end gap-3">
+                <button id="reset-settings" class="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">重置设置</button>
+                <button id="save-settings" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">保存设置</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 数据管理模态框 -->
+<div id="data-management-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+        <div class="sticky top-0 bg-white border-b border-gray-200 p-6">
+            <div class="flex justify-between items-center">
+                <h2 class="text-2xl font-bold text-gray-900">数据管理</h2>
+                <button id="close-data-modal" class="text-gray-400 hover:text-gray-600 transition-colors" title="关闭数据管理面板" aria-label="关闭数据管理面板">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        
+        <div class="p-6 space-y-8">
+            <!-- 数据导出 -->
+            <div>
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">数据导出</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="space-y-4">
+                        <h4 class="font-medium text-gray-900">收藏夹导出</h4>
+                        <div class="space-y-2">
+                            <button id="export-favorites-json" class="w-full p-3 text-left border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                                <div class="flex items-center justify-between">
+                                    <span class="font-medium">JSON 格式</span>
+                                    <span class="text-sm text-gray-500">结构化数据</span>
+                                </div>
+                            </button>
+                            <button id="export-favorites-csv" class="w-full p-3 text-left border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                                <div class="flex items-center justify-between">
+                                    <span class="font-medium">CSV 格式</span>
+                                    <span class="text-sm text-gray-500">表格数据</span>
+                                </div>
+                            </button>
+                            <button id="export-favorites-bibtex" class="w-full p-3 text-left border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                                <div class="flex items-center justify-between">
+                                    <span class="font-medium">BibTeX 格式</span>
+                                    <span class="text-sm text-gray-500">学术引用</span>
+                                </div>
+                            </button>
+                            <button id="export-favorites-markdown" class="w-full p-3 text-left border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                                <div class="flex items-center justify-between">
+                                    <span class="font-medium">Markdown 格式</span>
+                                    <span class="text-sm text-gray-500">文档格式</span>
+                                </div>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="space-y-4">
+                        <h4 class="font-medium text-gray-900">笔记导出</h4>
+                        <div class="space-y-2">
+                            <button id="export-notes-json" class="w-full p-3 text-left border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                                <div class="flex items-center justify-between">
+                                    <span class="font-medium">笔记 (JSON)</span>
+                                    <span class="text-sm text-gray-500">包含所有笔记</span>
+                                </div>
+                            </button>
+                            <button id="export-tags-json" class="w-full p-3 text-left border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                                <div class="flex items-center justify-between">
+                                    <span class="font-medium">标签 (JSON)</span>
+                                    <span class="text-sm text-gray-500">用户标签系统</span>
+                                </div>
+                            </button>
+                            <button id="export-ratings-json" class="w-full p-3 text-left border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                                <div class="flex items-center justify-between">
+                                    <span class="font-medium">评分 (JSON)</span>
+                                    <span class="text-sm text-gray-500">论文评分数据</span>
+                                </div>
+                            </button>
+                            <button id="export-all-data" class="w-full p-3 text-left border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors bg-blue-50 border-blue-300">
+                                <div class="flex items-center justify-between">
+                                    <span class="font-medium text-blue-700">完整数据备份</span>
+                                    <span class="text-sm text-blue-600">所有用户数据</span>
+                                </div>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 数据导入 -->
+            <div>
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">数据导入</h3>
+                <div class="space-y-4">
+                    <div class="border-2 border-dashed border-gray-300 rounded-lg p-6">
+                        <div class="text-center">
+                            <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                                <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                            <div class="mt-4">
+                                <label for="import-file" class="cursor-pointer">
+                                    <span class="mt-2 block text-sm font-medium text-gray-900">
+                                        点击上传数据文件
+                                    </span>
+                                    <span class="mt-1 block text-xs text-gray-500">
+                                        支持 JSON 格式的备份文件
+                                    </span>
+                                </label>
+                                <input id="import-file" type="file" accept=".json" class="sr-only">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="text-sm text-gray-600">
+                        <p><strong>注意：</strong>导入数据将会覆盖现有的用户数据，请确保已备份当前数据。</p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 自动备份设置 -->
+            <div>
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">自动备份</h3>
+                <div class="space-y-4">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h4 class="text-sm font-medium text-gray-900">启用自动备份</h4>
+                            <p class="text-sm text-gray-500">定期自动备份您的个人数据</p>
+                        </div>
+                        <input type="checkbox" id="auto-backup-enabled" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded" title="启用自动备份" aria-label="启用自动备份">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">备份频率</label>
+                        <select id="backup-frequency" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" title="选择备份频率" aria-label="选择备份频率">
+                            <option value="24">每天</option>
+                            <option value="168">每周</option>
+                            <option value="720">每月</option>
+                        </select>
+                    </div>
+                    <div class="p-4 bg-gray-50 rounded-lg">
+                        <p class="text-sm text-gray-600">
+                            <strong>上次备份：</strong> <span id="last-backup-time">从未备份</span>
+                        </p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 数据统计 -->
+            <div>
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">存储统计</h3>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div class="text-center p-4 bg-gray-50 rounded-lg">
+                        <p class="text-lg font-bold text-gray-600" id="storage-favorites">0</p>
+                        <p class="text-xs text-gray-500">收藏夹</p>
+                    </div>
+                    <div class="text-center p-4 bg-gray-50 rounded-lg">
+                        <p class="text-lg font-bold text-gray-600" id="storage-notes">0</p>
+                        <p class="text-xs text-gray-500">笔记</p>
+                    </div>
+                    <div class="text-center p-4 bg-gray-50 rounded-lg">
+                        <p class="text-lg font-bold text-gray-600" id="storage-tags">0</p>
+                        <p class="text-xs text-gray-500">标签</p>
+                    </div>
+                    <div class="text-center p-4 bg-gray-50 rounded-lg">
+                        <p class="text-lg font-bold text-gray-600" id="storage-size">0 KB</p>
+                        <p class="text-xs text-gray-500">总存储</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="sticky bottom-0 bg-gray-50 px-6 py-4 border-t border-gray-200">
+            <div class="flex justify-between">
+                <button id="clear-all-data" class="px-4 py-2 text-red-700 bg-red-50 border border-red-300 rounded-lg hover:bg-red-100 transition-colors">清除所有数据</button>
+                <div class="flex gap-3">
+                    <button id="backup-now" class="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">立即备份</button>
+                    <button id="close-data-management" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 智能推荐面板 -->
+<div id="recommendations-panel" class="fixed top-20 right-4 w-80 bg-white border border-gray-200 rounded-lg shadow-lg z-40 hidden">
+    <div class="p-4 border-b border-gray-200">
+        <div class="flex justify-between items-center">
+            <h3 class="text-lg font-semibold text-gray-900">智能推荐</h3>
+            <button id="close-recommendations" class="text-gray-400 hover:text-gray-600" title="关闭推荐面板" aria-label="关闭推荐面板">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+    </div>
+    <div id="recommendations-content" class="p-4 max-h-96 overflow-y-auto">
+        <div class="text-center py-8 text-gray-500">
+            <svg class="w-12 h-12 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
+            </svg>
+            <p class="text-sm">暂无推荐内容</p>
+            <p class="text-xs text-gray-400 mt-1">继续阅读论文以获得个性化推荐</p>
+        </div>
+    </div>
+</div>
+
+<!-- 日期筛选模态框 -->
+<div id="date-filter-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6 w-full max-w-md mx-4">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">日期筛选</h3>
+            <button id="close-date-modal" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" title="关闭" aria-label="关闭日期筛选">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+        
+        <div class="space-y-4">
+            <div>
+                <label for="start-date" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">开始日期</label>
+                <input type="date" id="start-date" name="start-date" title="选择开始日期" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
+            </div>
+            
+            <div>
+                <label for="end-date" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">结束日期</label>
+                <input type="date" id="end-date" name="end-date" title="选择结束日期" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
+            </div>
+        </div>
+        
+        <div class="flex gap-3 mt-6">
+            <button id="apply-date-filter" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">应用筛选</button>
+            <button id="clear-date-filter" class="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">清除</button>
+        </div>
+    </div>
+</div>
+
+<!-- 新增：论文卡片模板 -->
+<template id="paper-card-template">
+    <article class="paper-card" tabindex="0" role="article">
+        <!-- 这里放置 createDetailedPaperContent 函数中生成的完整HTML结构 -->
+        <!-- 以下为简化示例 -->
+        <div class="paper-header flex justify-between items-start">
+            <p class="paper-meta text-sm text-gray-500 mb-2"></p>
+            <div class="paper-actions flex items-center space-x-2">
+                 <button data-action="toggle-favorite" title="收藏/取消收藏" class="favorite-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 20 20" fill="currentColor"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
+                </button>
+            </div>
+        </div>
+        <h2 class="paper-title text-xl md:text-2xl font-bold mb-2"></h2>
+        <h3 class="paper-title-zh text-base font-semibold mb-3 italic"></h3>
+        <div class="paper-authors text-sm text-gray-600 mb-3 compact-hidden"></div>
+        <div class="paper-content">
+            <!-- 详细内容将在这里填充 -->
+        </div>
+        <div class="paper-footer flex items-center space-x-4 mt-4 text-sm">
+            <a href="#" target="_blank" class="paper-link-abstract font-semibold">摘要页</a>
+            <a href="#" target="_blank" class="paper-link-pdf font-semibold">PDF</a>
+            <a href="#" target="_blank" class="paper-link-alphaxiv font-semibold">AlphaXiv</a>
+            <button data-action="toggle-ai-details" class="ml-auto ai-toggle-btn font-bold py-2 px-4 rounded-lg transition compact-hidden">AI分析</button>
+        </div>
+    </article>
+</template>
+
+<!-- 新增：命令面板 -->
+<div id="command-palette-overlay" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-start justify-center pt-20">
+    <div id="command-palette" class="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-xl mx-4 transform transition-all">
+        <div class="p-3 border-b border-gray-200 dark:border-gray-700">
+            <input type="text" id="command-input" placeholder="输入命令..." class="w-full bg-transparent p-2 text-lg text-gray-900 dark:text-white focus:outline-none">
+        </div>
+        <ul id="command-list" class="max-h-80 overflow-y-auto">
+            <!-- 命令将动态填充在这里 -->
+        </ul>
+        <div class="p-2 bg-gray-50 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400">
+            <span>使用 
+                <kbd class="font-sans bg-gray-200 dark:bg-gray-700 rounded-md px-1.5 py-0.5">↑</kbd> 
+                <kbd class="font-sans bg-gray-200 dark:bg-gray-700 rounded-md px-1.5 py-0.5">↓</kbd> 
+                选择, 
+                <kbd class="font-sans bg-gray-200 dark:bg-gray-700 rounded-md px-1.5 py-0.5">Enter</kbd> 
+                执行</span>
+        </div>
+    </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

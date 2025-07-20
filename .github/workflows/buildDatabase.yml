@@ -1,0 +1,113 @@
+# 工作流名称
+name: buildDatabaseAndReport
+
+on:
+  # schedule:
+  #   # 每天在UTC时间02:00运行
+  #   - cron: "00 02 * * *"
+  workflow_dispatch: # 允许手动触发
+  # --- [核心改造] 注释掉 push 触发器 ---
+  # 当推送到主分支时将不再触发此工作流。
+  # 如果将来需要恢复，只需取消下面的注释即可。
+  # push:
+  #   branches:
+  #     - main
+
+jobs:
+  # --- 任务1: 构建数据和网站文件 ---
+  build:
+    runs-on: ubuntu-latest
+    # 将环境变量提升到 job 级别，供所有 step 使用
+    env:
+      GOOGLE_API_KEYS: ${{ secrets.GOOGLE_API_KEYS }}
+      MODEL_PRIORITY_LIST: ${{ vars.MODEL_PRIORITY_LIST }}
+      API_CALL_INTERVAL: ${{ vars.API_CALL_INTERVAL }}
+      LANGUAGE: ${{ vars.LANGUAGE }}
+      CATEGORIES: ${{ vars.CATEGORIES }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          uv sync
+
+      - name: Setup Git
+        run: |
+          git config --global user.email "${{ vars.EMAIL }}"
+          git config --global user.name "${{ vars.NAME }}"
+
+      - name: Set Target Date
+        id: date
+        run: echo "TARGET_DATE=$(date -d "yesterday" +"%Y-%m-%d")" >> $GITHUB_OUTPUT
+
+      - name: "Step 3: Build Database, Report and Update README"
+        id: build_site
+        run: |
+          source .venv/bin/activate
+          RAW_JSONL_FILE_NAME="${{ vars.RAW_JSONL_FILE }}"
+          RAW_JSONL_FILE_NAME="${RAW_JSONL_FILE_NAME:-raw_papers}"
+          LANGUAGE="${{ vars.LANGUAGE }}"
+          ENHANCED_JSONL_FILE="data/${RAW_JSONL_FILE_NAME}_AI_enhanced_${LANGUAGE:-Chinese}.jsonl"
+          OUTPUT_MD_FILE="data/${RAW_JSONL_FILE_NAME}.md"
+          PAPER_TEMPLATE_FILE="to_md/paper_template.md"
+
+          echo "Building the JSON database for the website..."
+          python build_database.py
+
+          echo "Generating Markdown report..."
+          python to_md/convert.py --input "$ENHANCED_JSONL_FILE" --template "$PAPER_TEMPLATE_FILE" --output "$OUTPUT_MD_FILE"
+
+          echo "Updating main README.md..."
+          python update_readme.py
+
+          echo "report_path=$OUTPUT_MD_FILE" >> $GITHUB_OUTPUT
+          echo "raw_jsonl_file_name=$RAW_JSONL_FILE_NAME" >> $GITHUB_OUTPUT
+
+      - name: "Commit and Push Website/Report Files"
+        run: |
+          git pull origin main --rebase --autostash
+          git add docs/ data/*.md README.md
+          git commit -m "build(site): update database, report, and README for ${{ steps.build_site.outputs.raw_jsonl_file_name }}" || echo "No changes to commit."
+          git push
+
+      # --- [可选] 创建每日速报 Issue ---
+      # 如果需要，可以取消下面的注释来重新启用此功能
+      - name: Create or Update Daily Digest Issue
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          title: "每日速报 (Daily Digest): ${{ steps.build_site.outputs.raw_jsonl_file_name }}"
+          content-filepath: "${{ steps.build_site.outputs.report_path }}"
+          labels: daily-digest, automated
+
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # 上传 `docs` 目录作为网站文件
+          path: ./docs
+
+  # --- 任务2: 部署网站 ---
+  deploy:
+    # 依赖于 'build' 任务成功完成
+    needs: build
+    # 部署任务需要的权限
+    permissions:
+      pages: write      # 写入GitHub Pages
+      id-token: write   # 用于身份验证
+    
+    # 部署环境的配置
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

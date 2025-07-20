@@ -1,0 +1,7 @@
+Based only on the title and abstract below, provide concise answers for each field. Do not include the questions in your response.
+
+Paper Title:
+{title}
+
+Paper Abstract:
+{content}

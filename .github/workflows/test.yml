@@ -1,0 +1,138 @@
+# 工作流名称
+name: 数据库构建和MD文件、Github Pages生成
+
+on:
+  #schedule:
+    # 每天在UTC时间16:30运行
+    #- cron: "30 16 * * *"
+  workflow_dispatch: # 允许手动触发
+
+
+  #push:  
+  #  branches:  
+  #    - main # 当推送到主分支时也触发，方便测试
+
+jobs:
+  # --- 任务1: 构建数据和网站文件 ---
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          #source /root/.cargo/env
+          uv sync
+          # uv pip install google-generativeai
+
+      - name: Run Data Processing Pipeline
+        id: run_scripts
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          SECONDARY_GOOGLE_API_KEY: ${{ secrets.SECONDARY_GOOGLE_API_KEY }}
+          LANGUAGE: ${{ vars.LANGUAGE }}
+          CATEGORIES: ${{ vars.CATEGORIES }}
+          MODEL_NAME: ${{ vars.MODEL_NAME }}
+          FALLBACK_MODELS: ${{ vars.FALLBACK_MODELS }}
+        run: |
+          source .venv/bin/activate
+          
+          # 动态定义文件名
+          TODAY=$(date +"%Y-%m-%d")
+          RAW_JSONL_FILE="data/$TODAY.jsonl"
+          ENHANCED_JSONL_FILE="data/${TODAY}_AI_enhanced_${LANGUAGE:-Chinese}.jsonl"
+          OUTPUT_MD_FILE="data/$TODAY.md"
+          PAPER_TEMPLATE_FILE="to_md/paper_template.md"
+          
+          # 步骤 1: 运行Scrapy爬虫
+          #echo "Step 1: Fetching new papers from arXiv..."
+          #(cd daily_arxiv && scrapy crawl arxiv -o "../$RAW_JSONL_FILE")
+          
+          # 步骤 2: 运行AI增强脚本
+          #echo "Step 2: Enhancing paper data with AI..."
+          #python ai/enhance.py --data "$RAW_JSONL_FILE"
+          
+          # 步骤 3: 运行数据库构建脚本 (新)
+          echo "Step 3: Building the JSON database for the website..."
+          python build_database.py
+
+          # 步骤 4: 生成Markdown报告
+          echo "Step 4: Generating Markdown report..."
+          python to_md/convert.py --input "$ENHANCED_JSONL_FILE" --template "$PAPER_TEMPLATE_FILE" --output "$OUTPUT_MD_FILE"
+          
+          # 步骤 5: 更新主 README.md
+          echo "Step 5: Updating main README.md..."
+          python update_readme.py
+          
+          echo "report_path=$OUTPUT_MD_FILE" >> $GITHUB_OUTPUT
+
+          echo "工作流成功完成！"
+       
+      # set current date   
+      - name: Set Current Date
+        id: date
+        run: echo "TODAY_DATE=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+      
+      # # 创建或更新每日速报问题 
+      # - name: Create or Update Daily Digest Issue
+      #   uses: peter-evans/create-issue-from-file@v5
+      #   with:
+      #     token: ${{ secrets.GITHUB_TOKEN }}
+      #     # **修正**: 从上一步的输出中获取日期
+      #     title: "每日速报 (Daily Digest): ${{ steps.date.outputs.TODAY_DATE }}"
+      #     content-filepath: "${{ steps.run_scripts.outputs.report_path }}"
+      #     labels: daily-digest, automated
+      
+      # 更新README.md文件
+      - name: Commit and push changes
+        run: |
+          git config --global user.email "${{ vars.EMAIL }}"
+          git config --global user.name "${{ vars.NAME }}"
+          git add .
+          if ! git diff --staged --quiet; then
+            git commit -m "update"
+          else
+            echo "No changes to commit."
+          fi      
+      # 确保在推送之前拉取最新的更改
+      # 这可以避免推送失败
+      - name: Pull latest changes
+        run: git pull origin main --rebase
+
+      # 注释: 推送更改到GitHub
+      # 使用ad-m/github-push-action来推送更改
+      - name: Push changes
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}    
+
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # 上传 `docs` 目录作为网站文件
+          path: ./docs
+
+  # --- 任务2: 部署网站 ---
+  deploy:
+    # 依赖于 'build' 任务成功完成
+    needs: build
+    # 部署任务需要的权限
+    permissions:
+      pages: write      # 写入GitHub Pages
+      id-token: write   # 用于身份验证
+    
+    # 部署环境的配置
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
