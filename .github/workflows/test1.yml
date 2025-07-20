@@ -1,0 +1,64 @@
+# 文件路径: .github/workflows/test.yml
+#
+# 功能: 一个用于快速测试核心功能的、可手动触发的工作流。
+# 它不会修改仓库中的任何文件，只在日志中显示结果。
+name: Simple End-to-End Test
+
+on:
+  workflow_dispatch: # 只允许手动触发
+
+jobs:
+  test-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          uv sync
+
+      - name: Create mock data for test
+        run: |
+          # [核心改造] 创建一个包含三篇论文的测试数据文件
+          cat <<EOF > test_data.jsonl
+          {"id": "2303.10135", "title": "A Min-Plus Low-Rank-Plus-Sparse Method for Matrix Factorization", "summary": "We propose a new matrix factorization method based on min-plus algebra. This method is particularly useful for matrices that can be approximated as a sum of a low-rank matrix and a sparse matrix. We show that our method can recover the underlying low-rank and sparse components with high accuracy."}
+          {"id": "2401.08406", "title": "Language Models are Super-Spam-Detectors", "summary": "This paper explores the capability of large language models (LLMs) to detect sophisticated forms of spam. By fine-tuning on a diverse dataset of spam and legitimate content, we demonstrate that LLMs can achieve state-of-the-art performance, outperforming traditional filter-based methods, especially against adversarial attacks."}
+          {"id": "2406.12458", "title": "Vision-Based Pre-Collision Braking System for E-Scooters", "summary": "We present a novel, lightweight, vision-based pre-collision braking system designed for e-scooters. The system uses a single monocular camera and an efficient deep learning model to detect obstacles and estimate time-to-collision, automatically applying brakes to prevent accidents. Field tests show a significant reduction in collision incidents."}
+          EOF
+
+      - name: Run AI Enhancement on mock data
+        env:
+          # 使用与主工作流相同的密钥和模型列表
+          GOOGLE_API_KEYS: ${{ secrets.GOOGLE_API_KEYS }}
+          MODEL_PRIORITY_LIST: ${{ vars.MODEL_PRIORITY_LIST }}
+          LANGUAGE: ${{ vars.LANGUAGE }}
+          # [核心测试点] 覆盖默认的API调用间隔，设为1秒，以便快速测试
+          API_CALL_INTERVAL: 1
+        run: |
+          source .venv/bin/activate
+          echo "--- Starting test run with 1-second interval ---"
+          # 使用 --retries 1 来加速失败切换的测试
+          python ai/enhance.py --data test_data.jsonl --retries 1
+      
+      - name: Verify test output
+        run: |
+          echo "--- Verifying test output ---"
+          ENHANCED_FILE="test_data_AI_enhanced_${LANGUAGE:-Chinese}.jsonl"
+          if [ -f "$ENHANCED_FILE" ]; then
+            echo "✅ Success: Output file '$ENHANCED_FILE' was created."
+            echo "--- File Content ---"
+            cat "$ENHANCED_FILE"
+            # 检查文件内容是否包含AI生成的结果
+            if grep -q '"AI":' "$ENHANCED_FILE"; then
+              echo "✅ Success: Output file contains 'AI' key."
+            else
+              echo "❌ Error: Output file is missing 'AI' key."
+              exit 1
+            fi
+          else
+            echo "❌ Error: Output file '$ENHANCED_FILE' was not found."
+            exit 1
+          fi
+

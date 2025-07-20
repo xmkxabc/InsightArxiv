@@ -1,0 +1,66 @@
+# 工作流名称
+name: enhanceDataAndDeploy
+
+on:
+  # schedule:
+  #   # 每天在UTC时间02:00运行
+  #   - cron: "00 02 * * *"
+  workflow_dispatch: # 允许手动触发
+  # --- [核心改造] 注释掉 push 触发器 ---
+  # 当推送到主分支时将不再触发此工作流。
+  # 如果将来需要恢复，只需取消下面的注释即可。
+  # push:
+  #   branches:
+  #     - main
+
+jobs:
+  # --- 任务1: 构建数据和网站文件 ---
+  build:
+    runs-on: ubuntu-latest
+    # 将环境变量提升到 job 级别，供所有 step 使用
+    env:
+      GOOGLE_API_KEYS: ${{ secrets.GOOGLE_API_KEYS }}
+      MODEL_PRIORITY_LIST: ${{ vars.MODEL_PRIORITY_LIST }}
+      API_CALL_INTERVAL: ${{ vars.API_CALL_INTERVAL }}
+      LANGUAGE: ${{ vars.LANGUAGE }}
+      CATEGORIES: ${{ vars.CATEGORIES }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          uv sync
+
+      - name: Setup Git
+        run: |
+          git config --global user.email "${{ vars.EMAIL }}"
+          git config --global user.name "${{ vars.NAME }}"
+
+      - name: Set Target Date
+        id: date
+        run: echo "TARGET_DATE=$(date -d "yesterday" +"%Y-%m-%d")" >> $GITHUB_OUTPUT
+
+      
+
+      - name: "Step 2: Enhance paper data with AI"
+        id: enhance
+        run: |
+          source .venv/bin/activate
+          RAW_JSONL_FILE_NAME="${{ vars.RAW_JSONL_FILE }}"
+          RAW_JSONL_FILE_NAME="${RAW_JSONL_FILE_NAME:-raw_papers}"
+          RAW_JSONL_FILE="data/${RAW_JSONL_FILE_NAME}.jsonl"
+          echo "Enhancing paper data with AI for file: $RAW_JSONL_FILE..."
+          python ai/enhance.py --data "$RAW_JSONL_FILE"
+          ENHANCED_JSONL_FILE="data/${RAW_JSONL_FILE_NAME}_AI_enhanced_${LANGUAGE:-Chinese}.jsonl"
+          echo "enhanced_file=$ENHANCED_JSONL_FILE" >> $GITHUB_OUTPUT
+
+      - name: "Commit and Push Enhanced Data"
+        run: |
+          git pull origin main --rebase --autostash
+          git add "${{ steps.enhance.outputs.enhanced_file }}"
+          git commit -m "feat(data): enhance papers for ${{ steps.enhance.outputs.enhanced_file }}" || echo "No changes to commit."
+          git push
+
