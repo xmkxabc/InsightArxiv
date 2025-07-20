@@ -403,8 +403,14 @@ const performance = {
         const now = Date.now();
         
         for (const [month, workerInfo] of this.workerStats.activeWorkers.entries()) {
+            // Validate that lastUpdate is a valid timestamp before calculation
+            if (!workerInfo || typeof workerInfo.lastUpdate !== 'number' || !isFinite(workerInfo.lastUpdate)) {
+                console.warn(`Invalid or missing timestamp for worker ${month}, skipping health check.`, workerInfo);
+                continue; // Skip to the next worker
+            }
+
             const timeSinceUpdate = now - workerInfo.lastUpdate;
-            
+
             if (timeSinceUpdate > stuckThreshold) {
                 console.warn(`🚨 Worker for ${month} may be stuck - no updates for ${timeSinceUpdate}ms`);
                 
@@ -466,6 +472,45 @@ const performance = {
         
         // Also cleanup old worker tracking data
         this.cleanupWorkerData();
+
+        // 新增：清理 state.allPapers 中不再显示的旧月份条目
+        // 仅在非搜索模式下运行，以避免意外清理搜索所需的数据
+        if (!state.isSearchMode) {
+            const maxLoadedMonths = 5; // 内存中保留的最大月份数量
+
+            if (state.loadedMonths.size > maxLoadedMonths) {
+                // 获取所有已加载的月份，并按时间倒序排序（最新的在前）
+                const sortedLoadedMonths = Array.from(state.loadedMonths).sort().reverse();
+                
+                // 确定要卸载的月份（保留最新的 maxLoadedMonths 个）
+                const monthsToUnload = sortedLoadedMonths.slice(maxLoadedMonths);
+                
+                if (monthsToUnload.length > 0) {
+                    console.log(`🧹 Memory cleanup: Unloading ${monthsToUnload.length} old month(s): ${monthsToUnload.join(', ')}`);
+                    const monthsToUnloadSet = new Set(monthsToUnload);
+                    const keysToDelete = [];
+
+                    // 找出属于要卸载月份的所有论文的ID
+                    for (const paperId of state.allPapers.keys()) {
+                        // 从论文ID推断月份，例如 '2507.12345' -> '2025-07'
+                        const paperMonth = `20${paperId.substring(0, 2)}-${paperId.substring(2, 4)}`;
+                        if (monthsToUnloadSet.has(paperMonth)) {
+                            keysToDelete.push(paperId);
+                        }
+                    }
+
+                    // 从 state.allPapers 中删除这些论文
+                    keysToDelete.forEach(key => {
+                        state.allPapers.delete(key);
+                    });
+
+                    // 从 state.loadedMonths 中移除已卸载的月份记录
+                    monthsToUnload.forEach(month => state.loadedMonths.delete(month));
+
+                    console.log(`🧹 Memory cleanup: Removed ${keysToDelete.length} papers. New total: ${state.allPapers.size}.`);
+                }
+            }
+        }
     },
 
     cleanupWorkerData() {
@@ -2654,7 +2699,7 @@ function checkWorkerSupport(month) {
     
     // Check recent failure rate for this month
     const failureHistory = getWorkerFailureHistory(month);
-    if (failureHistory.recentFailureRate > 0.7) { // >70% failure rate
+    if (failureHistory && failureHistory.recentFailureRate > 0.7) { // >70% failure rate
         console.log(`Skipping Worker for ${month} due to high failure rate: ${failureHistory.recentFailureRate}`);
         return false;
     }
@@ -2701,7 +2746,7 @@ function shouldAttemptFallback(error, month) {
     
     // Don't retry if we've already failed multiple times recently
     const failureHistory = getWorkerFailureHistory(month);
-    if (failureHistory.recentFailures >= 3) {
+    if (failureHistory && failureHistory.recentFailures >= 3) {
         console.log(`Not retrying fallback for ${month} - too many recent failures`);
         return false;
     }
