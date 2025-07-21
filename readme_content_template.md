@@ -34,19 +34,19 @@ InsightArxiv operates on a well-architected, modular data processing pipeline:
 1.  **[CRAWL] `daily_arxiv/` (Scrapy)**
     *   A sophisticated Scrapy spider that fetches the latest papers from arXiv, configured via the `CATEGORIES` environment variable.
     *   Features intelligent deduplication, filtering of cross-lists, and rich metadata extraction.
-    *   **Output**: `data/{date}.jsonl`
+    *   **Output**: `data/date.jsonl`
 
 2.  **[ENHANCE] `ai/` (LangChain + Gemini)**
     *   Reads the raw data and processes it with high concurrency using `asyncio`.
     *   Leverages Pydantic models defined in `ai/structure.py` to instruct Gemini to return structured, multi-dimensional analysis.
     *   The core `enhance.py` script manages complex model/key rotation, rate limiting, and retry logic.
-    *   **Output**: `data/{date}_AI_enhanced_{lang}.jsonl`
+    *   **Output**: `data/date_AI_enhanced_lang.jsonl`
 
 3.  **[GENERATE] `to_md/` (Python)**
     *   A powerful report generation engine that consumes the AI-enhanced data.
     *   Renders the structured data into a beautiful, readable Markdown report based on `template.md`.
     *   Intelligently generates a categorized TOC sorted by user preference and convenient in-page navigation.
-    *   **Output**: `data/{date}.md`
+    *   **Output**: `data/date.md`
 
 4.  **[PUBLISH] `update_readme.py`**
     *   Reads the daily generated Markdown report and dynamically updates the root `README.md` to publish the latest content.

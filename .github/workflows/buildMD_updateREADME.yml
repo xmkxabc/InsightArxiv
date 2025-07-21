@@ -1,0 +1,73 @@
+# 工作流名称
+name: Build Database, Report and Update README
+
+on:
+#   schedule:
+#     # 每周一到周五在UTC时间01:30运行
+#     - cron: "30 01 * * 1-5"
+  workflow_dispatch: # 允许手动触发
+  # --- [核心改造] 注释掉 push 触发器 ---
+  # 当推送到主分支时将不再触发此工作流。
+  # 如果将来需要恢复，只需取消下面的注释即可。
+  # push:
+  #   branches:
+  #     - main
+
+jobs:
+  # --- 任务1: 构建数据和网站文件 ---
+  build:
+    runs-on: ubuntu-latest
+    # 将环境变量提升到 job 级别，供所有 step 使用
+    env:
+      GOOGLE_API_KEYS: ${{ secrets.GOOGLE_API_KEYS }}
+      MODEL_PRIORITY_LIST: ${{ vars.MODEL_PRIORITY_LIST }}
+      API_CALL_INTERVAL: ${{ vars.API_CALL_INTERVAL }}
+      LANGUAGE: ${{ vars.LANGUAGE }}
+      CATEGORIES: ${{ vars.CATEGORIES }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          uv sync
+
+      - name: Setup Git
+        run: |
+          git config --global user.email "${{ vars.EMAIL }}"
+          git config --global user.name "${{ vars.NAME }}"
+
+      - name: Set Target Date
+        id: date
+        run: echo "TARGET_DATE=$(date -d "yesterday" +"%Y-%m-%d")" >> $GITHUB_OUTPUT
+
+      - name: "Step 3: Build Database, Report and Update README"
+        id: build_site
+        run: |
+          source .venv/bin/activate
+          TARGET_DATE="${{ steps.date.outputs.TARGET_DATE }}"
+          ENHANCED_JSONL_FILE="${{ steps.enhance.outputs.enhanced_file }}"
+          OUTPUT_MD_FILE="data/$TARGET_DATE.md"
+          PAPER_TEMPLATE_FILE="to_md/paper_template.md"
+
+          echo "Building the JSON database for the website..."
+          python build_database.py
+
+          echo "Generating Markdown report..."
+          python to_md/convert.py --input "$ENHANCED_JSONL_FILE" --template "$PAPER_TEMPLATE_FILE" --output "$OUTPUT_MD_FILE"
+
+          echo "Updating main README.md..."
+          python update_readme.py
+
+          echo "report_path=$OUTPUT_MD_FILE" >> $GITHUB_OUTPUT
+
+      - name: "Commit and Push Website/Report Files"
+        run: |
+          git pull origin main --rebase --autostash
+          git add docs/ data/*.md README.md
+          git commit -m "build(site): update database, report, and README for ${{ steps.date.outputs.TARGET_DATE }}" || echo "No changes to commit."
+          git push
+
+      
