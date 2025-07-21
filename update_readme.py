@@ -41,21 +41,21 @@ def parse_report_toc(filepath):
 def generate_dashboard_section(latest_file, recent_files):
     """生成动态摘要仪表盘模块。"""
     if not latest_file:
-        return "## 最新速报\n\n暂无报告。\n"
+        return "## Latest Bulletin\n\nNo reports at the moment.\n"
 
     latest_date_str = os.path.basename(latest_file).replace('.md', '')
     report_summary = parse_report_toc(latest_file)
-    
-    dashboard_md = f"## **最新速报：{latest_date_str}**\n\n"
+
+    dashboard_md = f"## **Latest Bulletin: {latest_date_str}**\n\n"
     
     if report_summary["total"] > 0:
         mini_toc = " | ".join([line.strip().replace("- [", "").split("]")[0] for line in report_summary["toc_lines"]])
-        dashboard_md += f"**今日领域分布:** {mini_toc}\n\n"
-    
-    dashboard_md += f"> [**阅读 {latest_date_str} 的完整报告...**](./{latest_file})\n"
-    
+        dashboard_md += f"**Today's Topic Distribution:** {mini_toc}\n\n"
+
+    dashboard_md += f"> [**Read the full report for {latest_date_str}...**](./{latest_file})\n"
+
     # 增加“本周回顾”
-    dashboard_md += "\n---\n\n### **本周回顾 (Past 7 Days)**\n\n"
+    dashboard_md += "\n---\n\n### **Past 7 Days**\n\n"
     # 我们只展示最近的6篇（不含今天）
     for file in recent_files:
         date_str = os.path.basename(file).replace('.md', '')
@@ -68,8 +68,8 @@ def generate_calendar_md(year, month, files_by_date):
     cal = calendar.Calendar()
     month_name = date(year, month, 1).strftime('%B')
     
-    md = f"#### {month_name} {year}\n\n"
-    md += "| 一 (Mon) | 二 (Tue) | 三 (Wed) | 四 (Thu) | 五 (Fri) | 六 (Sat) | 日 (Sun) |\n"
+    md = f"#### {month_name} {year}\n\n"    
+    md += "| Mon | Tue | Wed | Thu | Fri | Sat | Sun |\n"
     md += "|:---:|:---:|:---:|:---:|:---:|:---:|:---:|\n"
     
     for week in cal.monthdayscalendar(year, month):
@@ -107,7 +107,7 @@ def main():
     """主函数，生成并更新README.md。"""
     report_files = get_report_files()
     if not report_files:
-        print("在data目录中未找到任何报告文件。")
+        print("No report files found in the data directory.")
         return
 
     # --- 准备数据 ---
@@ -148,7 +148,7 @@ def main():
     content_parts = [
         dashboard_md,
         "---",
-        "### 近期日历 (Recent Calendar)",
+        "### **Recent Calendar**",
         current_month_cal
     ]
     if last_month_cal:
@@ -171,10 +171,10 @@ def main():
         
         with open(README_PATH, 'w', encoding='utf-8') as f:
             f.write(final_readme)
-            
-        print("README.md 已成功更新！")
+
+        print("README.md has been successfully updated!")
     except FileNotFoundError:
-        print(f"错误：找不到README模板文件 {TEMPLATE_PATH}")
+        print(f"Error: README template file not found at {TEMPLATE_PATH}")
 
 if __name__ == "__main__":
     main()
