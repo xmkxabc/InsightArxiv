@@ -2,9 +2,9 @@
 name: Build Database, Report and Update README
 
 on:
-#   schedule:
-#     # 每周一到周五在UTC时间01:30运行
-#     - cron: "30 01 * * 1-5"
+  # schedule:
+  #   # 每周一到周五在UTC时间01:30运行
+  #   - cron: "30 01 * * 1-5"
   workflow_dispatch: # 允许手动触发
   # --- [核心改造] 注释掉 push 触发器 ---
   # 当推送到主分支时将不再触发此工作流。
@@ -48,7 +48,7 @@ jobs:
         run: |
           source .venv/bin/activate
           TARGET_DATE="${{ steps.date.outputs.TARGET_DATE }}"
-          ENHANCED_JSONL_FILE="${{ steps.enhance.outputs.enhanced_file }}"
+          ENHANCED_JSONL_FILE="$TARGET_DATE_AI_enhanced.jsonl"
           OUTPUT_MD_FILE="data/$TARGET_DATE.md"
           PAPER_TEMPLATE_FILE="to_md/paper_template.md"
 
