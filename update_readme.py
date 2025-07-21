@@ -1,5 +1,6 @@
 import os
 import re
+import logging
 from datetime import datetime, date, timedelta
 from collections import defaultdict
 import calendar
@@ -9,6 +10,12 @@ DATA_DIR = "data"
 README_PATH = "README.md"
 # 这是一个新的模板文件，定义了README的静态框架
 TEMPLATE_PATH = "readme_content_template.md" 
+
+# 设置日志配置
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+) 
 
 def get_report_files():
     """扫描data目录，获取所有报告文件并按日期降序排序。"""
@@ -105,14 +112,27 @@ def generate_archive_md(files_by_year_month):
 
 def main():
     """主函数，生成并更新README.md。"""
+    logging.info("开始更新 README.md...")
+    
     report_files = get_report_files()
     if not report_files:
+        logging.warning("在data目录中未找到任何报告文件。")
         print("在data目录中未找到任何报告文件。")
         return
+
+    logging.info(f"找到 {len(report_files)} 个报告文件")
 
     # --- 准备数据 ---
     latest_report = report_files[0]
     recent_reports = report_files[1:7] 
+    
+    # 提取日期信息
+    latest_date_str = os.path.basename(latest_report).replace('.md', '')
+    logging.info(f"最新报告日期: {latest_date_str}")
+    
+    # 获取语言配置
+    language = os.getenv('LANGUAGE', 'Chinese')
+    logging.info(f"使用语言: {language}")
     
     files_by_date = {os.path.basename(f).replace('.md', ''): f for f in report_files}
     files_by_year_month = defaultdict(lambda: defaultdict(list))
@@ -122,9 +142,11 @@ def main():
         files_by_year_month[int(year)][int(month)].append(f)
 
     # --- 生成各个模块 ---
+    logging.info("生成仪表盘模块...")
     dashboard_md = generate_dashboard_section(latest_report, recent_reports)
     
     today = date.today()
+    logging.info("生成日历模块...")
     current_month_cal = generate_calendar_md(today.year, today.month, files_by_date)
     
     last_month_date = today.replace(day=1) - timedelta(days=1)
@@ -142,6 +164,7 @@ def main():
             if not is_current and not is_last_month_in_view:
                 archive_files[year][month].extend(files)
 
+    logging.info("生成存档模块...")
     archive_md = generate_archive_md(archive_files)
     
     # --- 组合最终内容 ---
@@ -161,20 +184,66 @@ def main():
         ])
     
     final_content = "\n\n".join(content_parts)
+    logging.info("内容组合完成")
 
     # --- 读取模板并写入README.md ---
     try:
+        logging.info(f"读取模板文件: {TEMPLATE_PATH}")
         with open(TEMPLATE_PATH, 'r', encoding='utf-8') as f:
             readme_template = f.read()
         
-        final_readme = readme_template.format(content=final_content)
+        # 准备模板变量
+        template_vars = {
+            'content': final_content,
+            'date': latest_date_str,
+            'lang': language
+        }
+        logging.info(f"模板变量: date={latest_date_str}, lang={language}")
         
+        # 执行模板格式化
+        try:
+            final_readme = readme_template.format(**template_vars)
+            logging.info("模板格式化成功")
+        except KeyError as e:
+            logging.error(f"模板格式化失败，缺少变量: {e}")
+            # 备用处理方案：使用字符串替换而不是format
+            logging.info("尝试备用处理方案...")
+            backup_template = readme_template
+            # 先替换已知的变量
+            for var_name, var_value in template_vars.items():
+                backup_template = backup_template.replace(f'{{{var_name}}}', str(var_value))
+            
+            # 检查是否还有未处理的占位符
+            remaining_placeholders = re.findall(r'\{[^}]+\}', backup_template)
+            if remaining_placeholders:
+                logging.warning(f"发现未知的模板占位符: {remaining_placeholders}")
+                # 将未知占位符替换为空字符串或者警告文本
+                for placeholder in remaining_placeholders:
+                    backup_template = backup_template.replace(placeholder, f"<!-- Missing template variable: {placeholder} -->")
+                    logging.warning(f"将未知占位符 {placeholder} 替换为注释")
+            
+            final_readme = backup_template
+            logging.info("备用处理方案成功")
+        except Exception as e:
+            logging.error(f"模板格式化过程中发生未预期错误: {e}")
+            raise
+        
+        logging.info(f"写入README文件: {README_PATH}")
         with open(README_PATH, 'w', encoding='utf-8') as f:
             f.write(final_readme)
             
+        logging.info("README.md 更新完成！")
         print("README.md 已成功更新！")
+        
     except FileNotFoundError:
-        print(f"错误：找不到README模板文件 {TEMPLATE_PATH}")
+        error_msg = f"错误：找不到README模板文件 {TEMPLATE_PATH}"
+        logging.error(error_msg)
+        print(error_msg)
+    except Exception as e:
+        error_msg = f"处理过程中发生错误: {e}"
+        logging.error(error_msg)
+        print(error_msg)
+        raise
 
 if __name__ == "__main__":
     main()
