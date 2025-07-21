@@ -117,13 +117,13 @@ This project is open-sourced under the [MIT License](LICENSE).
 
 ---
 
-## **最新速报：2025-07-20**
+## **Latest Bulletin: 2025-07-20**
 
-> [**阅读 2025-07-20 的完整报告...**](./data/2025-07-20.md)
+> [**Read the full report for 2025-07-20...**](./data/2025-07-20.md)
 
 ---
 
-### **本周回顾 (Past 7 Days)**
+### **Past 7 Days**
 
 - [2025-07-17](./data/2025-07-17.md)
 - [2025-07-16](./data/2025-07-16.md)
@@ -135,11 +135,11 @@ This project is open-sourced under the [MIT License](LICENSE).
 
 ---
 
-### 近期日历 (Recent Calendar)
+### **Recent Calendar**
 
 #### July 2025
 
-| 一 (Mon) | 二 (Tue) | 三 (Wed) | 四 (Thu) | 五 (Fri) | 六 (Sat) | 日 (Sun) |
+| Mon | Tue | Wed | Thu | Fri | Sat | Sun |
 |:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 |   | [1](./data/2025-07-01.md) | [2](./data/2025-07-02.md) | [3](./data/2025-07-03.md) | [4](./data/2025-07-04.md) | [5](./data/2025-07-05.md) | [6](./data/2025-07-06.md) |
 | [7](./data/2025-07-07.md) | [8](./data/2025-07-08.md) | [9](./data/2025-07-09.md) | [10](./data/2025-07-10.md) | [11](./data/2025-07-11.md) | 12 | [13](./data/2025-07-13.md) |
