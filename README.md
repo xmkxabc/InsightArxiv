@@ -1,6 +1,6 @@
 # InsightArxiv - AI-Enhanced Daily arXiv Digest
 
-🌐 **View the Live Digest**: [xmkxabc.github.io/insight-arxiv/](https://github.com/xmkxabc/InsightArxiv)
+🌐 **View the Live Digest**: [xmkxabc.github.io/insightarxiv/](https://xmkxabc.github.io/InsightArxiv)
 
 ## 🚀 Vision
 
@@ -59,8 +59,8 @@ InsightArxiv operates on a well-architected, modular data processing pipeline:
 
 Clone this repository to your local machine:
 ```bash
-git clone https://github.com/your-username/insight-arxiv.git
-cd insight-arxiv
+git clone https://github.com/xmkxabc/insightarxiv.git
+cd insightarxiv
 ```
 Make sure you have Python 3.10+ installed, along with `uv` (or `pip`) for package management.
 
@@ -117,20 +117,20 @@ This project is open-sourced under the [MIT License](LICENSE).
 
 ---
 
-## **Latest Bulletin: 2025-07-21**
+## **Latest Bulletin: 2025-07-22**
 
-> [**Read the full report for 2025-07-21...**](./data/2025-07-21.md)
+> [**Read the full report for 2025-07-22...**](./data/2025-07-22.md)
 
 ---
 
 ### **Past 7 Days**
 
+- [2025-07-21](./data/2025-07-21.md)
 - [2025-07-20](./data/2025-07-20.md)
 - [2025-07-18](./data/2025-07-18.md)
 - [2025-07-17](./data/2025-07-17.md)
 - [2025-07-16](./data/2025-07-16.md)
 - [2025-07-15](./data/2025-07-15.md)
-- [2025-07-14](./data/2025-07-14.md)
 
 
 ---
@@ -144,7 +144,7 @@ This project is open-sourced under the [MIT License](LICENSE).
 |   | [1](./data/2025-07-01.md) | [2](./data/2025-07-02.md) | [3](./data/2025-07-03.md) | [4](./data/2025-07-04.md) | [5](./data/2025-07-05.md) | [6](./data/2025-07-06.md) |
 | [7](./data/2025-07-07.md) | [8](./data/2025-07-08.md) | [9](./data/2025-07-09.md) | [10](./data/2025-07-10.md) | [11](./data/2025-07-11.md) | 12 | [13](./data/2025-07-13.md) |
 | [14](./data/2025-07-14.md) | [15](./data/2025-07-15.md) | [16](./data/2025-07-16.md) | [17](./data/2025-07-17.md) | [18](./data/2025-07-18.md) | 19 | [20](./data/2025-07-20.md) |
-| [21](./data/2025-07-21.md) | 22 | 23 | 24 | 25 | 26 | 27 |
+| [21](./data/2025-07-21.md) | [22](./data/2025-07-22.md) | 23 | 24 | 25 | 26 | 27 |
 | 28 | 29 | 30 | 31 |   |   |   |
 
 
