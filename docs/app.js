@@ -1594,6 +1594,7 @@ async function init() {
     console.log('开始初始化...');
     showProgress('正在初始化...');
     try {
+        injectStyles(); // 注入自定义高亮样式
         hideLoadError();
         console.log('加载基础设置...');
         // 基础设置加载 - 使用 try-catch 包装每个函数调用
@@ -4759,22 +4760,25 @@ function updateViewModeUI() {
 }
 
 // --- 核心逻辑：状态切换与导航 ---
-// 修复：重构月份导航逻辑，确保其行为正确
-async function navigateToMonth(month) {
+// 修复：重构月份导航逻辑，确保其行为正确 (isChildCall 用于处理嵌套调用)
+async function navigateToMonth(month, isChildCall = false) {
     console.log(`=== NAVIGATE TO MONTH START ===`);
     performanceTracker.startTracking(`Navigate to ${month}`);
 
-    console.log(`navigateToMonth called with month: ${month}`);
+    console.log(`navigateToMonth called with month: ${month}, isChildCall: ${isChildCall}`);
     console.log(`isFetching: ${state.isFetching}`);
 
-    if (state.isFetching) {
+    // 只有顶层调用才检查和设置锁
+    if (!isChildCall && state.isFetching) {
         console.log('Already fetching, returning early');
         return;
     }
 
-    state.isFetching = true;
-    console.log('Set isFetching to true');
-    showProgress('准备导航...');
+    if (!isChildCall) {
+        state.isFetching = true;
+        console.log('Set isFetching to true');
+        showProgress('准备导航...');
+    }
 
     try {
         // 在开始加载前，显示骨架屏
@@ -4855,10 +4859,13 @@ async function navigateToMonth(month) {
         showToast('导航失败，请重试');
     } finally {
         console.log('=== FINALLY BLOCK START ===');
-        state.isFetching = false;
-        console.log('Set isFetching to false');
-        hideProgress();
-        console.log('Hidden progress indicator');
+        // 只有顶层调用才解除锁和隐藏进度条
+        if (!isChildCall) {
+            state.isFetching = false;
+            console.log('Set isFetching to false');
+            hideProgress();
+            console.log('Hidden progress indicator');
+        }
         console.log('=== NAVIGATE TO MONTH END ===');
     }
 }
@@ -4931,8 +4938,8 @@ async function handleSearch() {
 
             // 如果未渲染，则使用 handleDirectLink 功能加载并跳转
             // 这将导航到正确的月份并高亮显示论文
-            showToast(`正在查找并跳转到论文 ${paperId}...`, 'info');
-            await handleDirectLink(paperId);
+            showProgress(`正在查找并跳转到论文 ${paperId}...`);
+            await handleDirectLink(paperId, true); // 传递 isChildCall = true
             return; // 操作完成后返回
         }
 
@@ -5024,10 +5031,8 @@ async function handleSearch() {
         });
     } finally {
         state.isFetching = false;
-        // 只有在不是ID搜索导航的情况下才隐藏进度条，因为handleDirectLink会自己处理
-        if (!/^\d{4}\.\d{4,5}$/.test(searchInput.value.trim())) {
-            hideProgress();
-        }
+        // handleSearch 总是管理锁，所以它总是应该隐藏进度条
+        hideProgress();
     }
 }
 
@@ -5140,12 +5145,19 @@ function setupIntersectionObserver() {
 
 // --- 新增和优化的事件处理 ---
 
-async function handleDirectLink(paperId) {
-    if (state.isFetching) return;
-    state.isFetching = true;
-    showProgress('正在定位论文...');
+async function handleDirectLink(paperId, isChildCall = false) {
+    // 只有顶层调用才检查和设置锁
+    if (!isChildCall && state.isFetching) {
+        return;
+    }
+    if (!isChildCall) {
+        state.isFetching = true;
+        showProgress('正在定位论文...');
+    }
+
     try {
         if (!/^\d{4}\.\d{4,5}$/.test(paperId)) {
+            // 这个错误处理主要由顶层调用者负责
             showToast(`无效的论文ID格式: ${paperId}`);
             console.error(`无效的论文ID格式: ${paperId}`);
             const url = new URL(window.location);
@@ -5156,7 +5168,7 @@ async function handleDirectLink(paperId) {
         }
 
         const month = `20${paperId.substring(0, 2)}-${paperId.substring(2, 4)}`;
-        await navigateToMonth(month);
+        await navigateToMonth(month, true); // 传递 isChildCall = true
 
         if (!state.allPapers.has(paperId)) {
             console.error(`论文 ID ${paperId} 在数据中未找到。`);
@@ -5167,20 +5179,34 @@ async function handleDirectLink(paperId) {
             return;
         }
 
-        const checkCardExists = (resolve) => {
-            const card = document.getElementById(`card-${paperId}`);
-            if (card) { resolve(card); }
-            else { requestAnimationFrame(() => checkCardExists(resolve)); }
-        };
+        const card = await new Promise((resolve, reject) => {
+            const startTime = Date.now();
+            const timeout = 5000; // 5秒超时
 
-        const card = await new Promise(checkCardExists);
+            const checkCardExists = () => {
+                const card = document.getElementById(`card-${paperId}`);
+                if (card) {
+                    resolve(card);
+                } else if (Date.now() - startTime > timeout) {
+                    reject(new Error(`定位论文卡片超时: ${paperId}`));
+                } else {
+                    requestAnimationFrame(checkCardExists);
+                }
+            };
+            checkCardExists();
+        });
 
         card.scrollIntoView({ behavior: 'smooth', block: 'center' });
         card.classList.add('highlight-shared-paper');
         setTimeout(() => card.classList.remove('highlight-shared-paper'), 3000);
+    } catch (error) {
+        console.error("Direct link failed:", error);
+        showToast(error.message, 'error');
     } finally {
-        state.isFetching = false;
-        hideProgress();
+        if (!isChildCall) {
+            state.isFetching = false;
+            hideProgress();
+        }
     }
 }
 
