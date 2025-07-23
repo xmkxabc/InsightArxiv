@@ -1,6 +1,6 @@
 # InsightArxiv - AI-Enhanced Daily arXiv Digest
 
-🌐 **View the Live Digest**: [xmkxabc.github.io/insight-arxiv/](https://github.com/xmkxabc/InsightArxiv)
+🌐 **View the Live Digest**: [xmkxabc.github.io/insightarxiv/](https://xmkxabc.github.io/InsightArxiv)
 
 ## 🚀 Vision
 
@@ -59,8 +59,8 @@ InsightArxiv operates on a well-architected, modular data processing pipeline:
 
 Clone this repository to your local machine:
 ```bash
-git clone https://github.com/your-username/insight-arxiv.git
-cd insight-arxiv
+git clone https://github.com/xmkxabc/insightarxiv.git
+cd insightarxiv
 ```
 Make sure you have Python 3.10+ installed, along with `uv` (or `pip`) for package management.
 
