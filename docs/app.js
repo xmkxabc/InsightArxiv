@@ -1589,6 +1589,25 @@ window.addEventListener('unhandledrejection', function (e) {
     console.error('Promise拒绝堆栈:', e.reason?.stack);
 });
 
+// --- 动态样式注入 ---
+function injectStyles() {
+    const style = document.createElement('style');
+    style.id = 'dynamic-styles';
+    style.textContent = `
+        .highlight {
+            background-color: #fde047; /* yellow-300 */
+            color: #1f2937; /* gray-800 */
+            padding: 0 2px;
+            border-radius: 2px;
+        }
+        body[data-theme='dark'] .highlight {
+            background-color: #facc15; /* yellow-400 */
+            color: #111827; /* gray-900 */
+        }
+    `;
+    document.head.appendChild(style);
+}
+
 // --- 核心功能 ---
 async function init() {
     console.log('开始初始化...');
