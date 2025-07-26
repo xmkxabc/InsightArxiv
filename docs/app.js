@@ -5274,7 +5274,7 @@ function showFavorites() {
     handleSearch();
 }
 
-function setupGlobalEventListeners() {
+function setupEventListeners() {
     // 新增：错误重试按钮
     if (retryLoadBtn) {
         retryLoadBtn.addEventListener('click', () => {
@@ -6652,8 +6652,486 @@ function setupPersonalizedKeyboardShortcuts() {
     }
 }
 
-// 初始化个性化快捷键
-setTimeout(setupPersonalizedKeyboardShortcuts, 3000);
+// --- Service Worker Registration and PWA Features ---
+async function initializeServiceWorker() {
+    if ('serviceWorker' in navigator) {
+        try {
+            const registration = await navigator.serviceWorker.register('/sw.js');
+            console.log('Service Worker registered successfully:', registration.scope);
+            
+            // 监听 Service Worker 更新
+            registration.addEventListener('updatefound', () => {
+                const newWorker = registration.installing;
+                newWorker.addEventListener('statechange', () => {
+                    if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                        showToast('应用有新版本可用，请刷新页面', 'info', 5000);
+                    }
+                });
+            });
+            
+            // 监听来自 Service Worker 的消息
+            navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage);
+            
+        } catch (error) {
+            console.error('Service Worker registration failed:', error);
+        }
+    }
+}
+
+function handleServiceWorkerMessage(event) {
+    const { type, data } = event.data;
+    
+    switch (type) {
+        case 'CACHE_UPDATED':
+            showToast('内容已更新并缓存', 'success');
+            break;
+        case 'OFFLINE_READY':
+            showToast('应用已准备好离线使用', 'info');
+            break;
+        case 'SYNC_COMPLETED':
+            showToast('数据同步完成', 'success');
+            break;
+    }
+}
+
+// --- Enhanced Mobile Features ---
+
+// Pull to refresh functionality
+function initializePullToRefresh() {
+    if (!state.mobile.isTouchDevice) return;
+
+    const pullToRefreshEl = document.getElementById('pull-to-refresh');
+    const pullRefreshIcon = pullToRefreshEl.querySelector('.pull-refresh-icon');
+    const pullRefreshText = document.getElementById('pull-refresh-text');
+    
+    let startY = 0;
+    let currentY = 0;
+    let pullDistance = 0;
+    let isPulling = false;
+    let isRefreshing = false;
+    const threshold = 80; // 触发刷新的距离
+    
+    // 只在页面顶部时启用下拉刷新
+    document.addEventListener('touchstart', (e) => {
+        if (window.scrollY === 0 && !isRefreshing) {
+            startY = e.touches[0].clientY;
+            isPulling = true;
+        }
+    }, { passive: true });
+    
+    document.addEventListener('touchmove', (e) => {
+        if (!isPulling || isRefreshing) return;
+        
+        currentY = e.touches[0].clientY;
+        pullDistance = Math.max(0, currentY - startY);
+        
+        if (pullDistance > 0) {
+            e.preventDefault(); // 防止页面滚动
+            
+            const progress = Math.min(pullDistance / threshold, 1);
+            const translateY = Math.min(pullDistance * 0.5, 60);
+            
+            pullToRefreshEl.style.transform = `translateY(${translateY}px)`;
+            pullRefreshIcon.style.transform = `rotate(${progress * 180}deg)`;
+            
+            if (pullDistance >= threshold) {
+                pullRefreshText.textContent = '释放刷新';
+                pullToRefreshEl.classList.add('visible');
+                // 触觉反馈
+                if (navigator.vibrate) {
+                    navigator.vibrate(50);
+                }
+            } else {
+                pullRefreshText.textContent = '下拉刷新';
+            }
+        }
+    }, { passive: false });
+    
+    document.addEventListener('touchend', async (e) => {
+        if (!isPulling || isRefreshing) return;
+        
+        isPulling = false;
+        
+        if (pullDistance >= threshold) {
+            isRefreshing = true;
+            pullRefreshText.textContent = '正在刷新...';
+            pullRefreshIcon.classList.add('spinning');
+            pullToRefreshEl.classList.add('refreshing');
+            
+            try {
+                // 执行刷新逻辑
+                await refreshAppData();
+                showToast('刷新完成', 'success');
+            } catch (error) {
+                showToast('刷新失败，请重试', 'error');
+                console.error('Refresh failed:', error);
+            } finally {
+                // 重置状态
+                setTimeout(() => {
+                    isRefreshing = false;
+                    pullToRefreshEl.style.transform = 'translateY(-60px)';
+                    pullToRefreshEl.classList.remove('visible', 'refreshing');
+                    pullRefreshIcon.classList.remove('spinning');
+                    pullRefreshIcon.style.transform = 'rotate(0deg)';
+                    pullRefreshText.textContent = '下拉刷新';
+                }, 500);
+            }
+        } else {
+            // 未达到阈值，回弹
+            pullToRefreshEl.style.transform = 'translateY(-60px)';
+            pullToRefreshEl.classList.remove('visible');
+            pullRefreshIcon.style.transform = 'rotate(0deg)';
+            pullRefreshText.textContent = '下拉刷新';
+        }
+        
+        pullDistance = 0;
+    }, { passive: true });
+}
+
+// 刷新应用数据
+async function refreshAppData() {
+    // 如果有 Service Worker，清除缓存并重新获取数据
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        await clearAppCache();
+    }
+    
+    // 重新加载数据
+    await fetchManifest();
+    
+    // 重新渲染当前视图
+    if (state.isSearchMode) {
+        handleSearch();
+    } else {
+        const currentMonth = state.manifest?.availableMonths?.[state.currentMonthIndex];
+        if (currentMonth) {
+            await loadMonth(currentMonth);
+        }
+    }
+}
+
+// 清除应用缓存
+async function clearAppCache() {
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        const channel = new MessageChannel();
+        return new Promise((resolve) => {
+            channel.port1.onmessage = (event) => {
+                resolve(event.data);
+            };
+            
+            navigator.serviceWorker.controller.postMessage({
+                type: 'CLEAR_CACHE'
+            }, [channel.port2]);
+        });
+    }
+}
+
+// Enhanced haptic feedback support
+function hapticFeedback(type = 'light') {
+    if (!navigator.vibrate) return;
+    
+    const patterns = {
+        light: [10],
+        medium: [20],
+        heavy: [50],
+        success: [10, 50, 10],
+        error: [50, 100, 50],
+        warning: [30, 50, 30],
+        tap: [5],
+        longPress: [10, 20, 10]
+    };
+    
+    navigator.vibrate(patterns[type] || patterns.light);
+}
+
+// Enhanced scroll performance with intersection observer
+function initializeScrollOptimizations() {
+    // 优化滚动性能
+    let ticking = false;
+    
+    function updateScrollPosition() {
+        updateReadingProgress();
+        
+        // 背景更新返回顶部按钮状态
+        if (window.scrollY > 300) {
+            backToTopBtn.classList.add('visible');
+        } else {
+            backToTopBtn.classList.remove('visible');
+        }
+        
+        ticking = false;
+    }
+    
+    window.addEventListener('scroll', () => {
+        if (!ticking) {
+            requestAnimationFrame(updateScrollPosition);
+            ticking = true;
+        }
+    }, { passive: true });
+    
+    // 使用 Intersection Observer 优化元素可见性检测
+    if ('IntersectionObserver' in window) {
+        const observerOptions = {
+            root: null,
+            rootMargin: '100px',
+            threshold: 0.1
+        };
+        
+        const cardObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                const card = entry.target;
+                if (entry.isIntersecting) {
+                    // 卡片进入视窗
+                    card.classList.add('visible');
+                    // 记录阅读行为
+                    const paperId = card.id.replace('card-', '');
+                    if (paperId && state.allPapers.has(paperId)) {
+                        recordPaperView(paperId);
+                    }
+                } else {
+                    // 卡片离开视窗
+                    card.classList.remove('visible');
+                }
+            });
+        }, observerOptions);
+        
+        // 观察所有论文卡片
+        setTimeout(() => {
+            document.querySelectorAll('.paper-card').forEach(card => {
+                cardObserver.observe(card);
+            });
+        }, 1000);
+        
+        // 存储 observer 以便后续使用
+        state.cardObserver = cardObserver;
+    }
+}
+
+// 记录论文浏览行为
+function recordPaperView(paperId) {
+    const now = Date.now();
+    const lastView = state.readingHistory.viewedPapers.get(paperId);
+    
+    // 防止重复记录（5秒内的重复浏览）
+    if (!lastView || (now - lastView.timestamp > 5000)) {
+        state.readingHistory.viewedPapers.set(paperId, {
+            timestamp: now,
+            duration: 0,
+            interactions: (lastView?.interactions || 0) + 1
+        });
+        
+        // 更新阅读统计
+        updateReadingStats();
+    }
+}
+
+// 更新阅读统计
+function updateReadingStats() {
+    const today = new Date().toDateString();
+    const todayViews = Array.from(state.readingHistory.viewedPapers.values())
+        .filter(view => new Date(view.timestamp).toDateString() === today);
+    
+    // 更新每日阅读目标进度
+    const dailyProgress = document.getElementById('daily-reading-progress');
+    if (dailyProgress) {
+        const target = state.userPreferences.readingGoals.dailyTarget || 5;
+        const progress = Math.min((todayViews.length / target) * 100, 100);
+        dailyProgress.style.width = `${progress}%`;
+    }
+    
+    // 保存阅读历史
+    try {
+        localStorage.setItem('arxiv_reading_history', JSON.stringify({
+            viewedPapers: Array.from(state.readingHistory.viewedPapers.entries()),
+            lastUpdated: Date.now()
+        }));
+    } catch (error) {
+        console.warn('Failed to save reading history:', error);
+    }
+}
+
+// App shortcuts support (when installed as PWA)
+function handleAppShortcuts() {
+    // 监听快捷方式启动
+    if ('launchQueue' in window && 'files' in LaunchParams.prototype) {
+        launchQueue.setConsumer((launchParams) => {
+            if (launchParams.targetURL) {
+                const url = new URL(launchParams.targetURL);
+                const action = url.searchParams.get('action');
+                
+                switch (action) {
+                    case 'search':
+                        searchInput.focus();
+                        break;
+                    case 'favorites':
+                        performTagSearch('favorites');
+                        break;
+                }
+            }
+        });
+    }
+}
+
+// Enhanced keyboard navigation for mobile
+function enhanceKeyboardNavigation() {
+    // 改进移动端键盘导航
+    document.addEventListener('keydown', (e) => {
+        // 如果是虚拟键盘上的搜索键
+        if (e.key === 'Enter' && e.target === searchInput) {
+            e.preventDefault();
+            handleSearch();
+            searchInput.blur(); // 隐藏虚拟键盘
+        }
+    });
+    
+    // 监听虚拟键盘显示/隐藏 (实验性API)
+    if ('virtualKeyboard' in navigator) {
+        navigator.virtualKeyboard.addEventListener('geometrychange', (event) => {
+            const { height } = event.target.boundingRect;
+            const isVisible = height > 0;
+            
+            document.documentElement.style.setProperty(
+                '--keyboard-height', 
+                isVisible ? `${height}px` : '0px'
+            );
+            
+            // 调整底部导航栏位置
+            const bottomNav = document.querySelector('.mobile-bottom-nav');
+            if (bottomNav) {
+                bottomNav.style.transform = isVisible ? `translateY(-${height}px)` : '';
+            }
+        });
+    }
+}
+
+// Install prompt handling
+function handleInstallPrompt() {
+    let deferredPrompt;
+    
+    window.addEventListener('beforeinstallprompt', (e) => {
+        // 阻止默认的安装提示
+        e.preventDefault();
+        deferredPrompt = e;
+        
+        // 显示自定义安装按钮
+        const installBtn = document.getElementById('install-app-btn');
+        if (installBtn) {
+            installBtn.style.display = 'block';
+            installBtn.addEventListener('click', async () => {
+                if (deferredPrompt) {
+                    deferredPrompt.prompt();
+                    const { outcome } = await deferredPrompt.userChoice;
+                    
+                    if (outcome === 'accepted') {
+                        showToast('应用安装成功！', 'success');
+                        hapticFeedback('success');
+                    }
+                    
+                    deferredPrompt = null;
+                    installBtn.style.display = 'none';
+                }
+            });
+        }
+    });
+    
+    // 检测应用是否已安装
+    window.addEventListener('appinstalled', () => {
+        showToast('欢迎使用 InsightArxiv 应用！', 'success');
+        hapticFeedback('success');
+        
+        // 隐藏安装提示
+        const installBtn = document.getElementById('install-app-btn');
+        if (installBtn) {
+            installBtn.style.display = 'none';
+        }
+    });
+}
+
+// --- Network Status and Offline Handling ---
+function initializeNetworkStatus() {
+    const networkStatus = document.getElementById('network-status');
+    const networkStatusText = document.getElementById('network-status-text');
+    
+    function updateNetworkStatus() {
+        const isOnline = navigator.onLine;
+        
+        if (isOnline) {
+            networkStatus.classList.add('hidden');
+            networkStatus.classList.remove('bg-orange-500');
+            networkStatus.classList.add('bg-green-500');
+            networkStatusText.textContent = '网络连接已恢复';
+            
+            // 自动隐藏恢复提示
+            setTimeout(() => {
+                networkStatus.classList.add('hidden');
+            }, 3000);
+            
+        } else {
+            networkStatus.classList.remove('hidden', 'bg-green-500');
+            networkStatus.classList.add('bg-orange-500');
+            networkStatusText.textContent = '网络连接已断开，正在使用离线模式';
+        }
+    }
+    
+    // 监听网络状态变化
+    window.addEventListener('online', () => {
+        console.log('网络已连接');
+        updateNetworkStatus();
+        showToast('网络连接已恢复', 'success');
+        
+        // 尝试同步离线期间的数据
+        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({
+                type: 'SYNC_DATA'
+            });
+        }
+    });
+    
+    window.addEventListener('offline', () => {
+        console.log('网络已断开');
+        updateNetworkStatus();
+        showToast('网络连接已断开，将使用离线模式', 'warning');
+    });
+    
+    // 初始状态检查
+    updateNetworkStatus();
+}
+
+// 初始化所有移动端增强功能
+function initializeMobileEnhancements() {
+    initializeNetworkStatus();
+    
+    if (state.mobile.isTouchDevice) {
+        initializePullToRefresh();
+        enhanceKeyboardNavigation();
+        
+        // 添加触觉反馈到各种交互
+        document.addEventListener('click', (e) => {
+            const target = e.target.closest('button, .keyword-tag, .month-btn');
+            if (target) {
+                hapticFeedback('tap');
+            }
+        });
+        
+        // 长按反馈
+        let longPressTimer;
+        document.addEventListener('touchstart', (e) => {
+            const target = e.target.closest('.paper-card, .favorite-btn');
+            if (target) {
+                longPressTimer = setTimeout(() => {
+                    hapticFeedback('longPress');
+                }, 500);
+            }
+        });
+        
+        document.addEventListener('touchend', () => {
+            clearTimeout(longPressTimer);
+        });
+    }
+    
+    initializeScrollOptimizations();
+    handleAppShortcuts();
+    handleInstallPrompt();
+}
 
 // 导出引用格式的辅助函数
 function formatPaperCitation(paper, format = 'apa') {
@@ -6806,4 +7284,40 @@ function initializeAsyncImageProcessing() {
     return null;
 }
 
-document.addEventListener('DOMContentLoaded', init);
+document.addEventListener('DOMContentLoaded', async () => {
+    console.log('🚀 InsightArxiv 开始初始化...');
+    
+    try {
+        // 基础初始化
+        detectFirstVisit();
+        initializeTheme();
+        loadSearchHistory();
+        initializeSearchSuggestions();
+        setupEventListeners();
+        updateSearchStickiness();
+        
+        // 移动端功能初始化
+        if (state.mobile.isTouchDevice) {
+            initializeMobileFeatures();
+            initializeMobileEnhancements();
+        }
+        
+        // PWA 和离线功能
+        await initializeServiceWorker();
+        
+        // 用户引导系统
+        initializeUserGuidance();
+        
+        // 性能优化
+        preloadCriticalData();
+        
+        // 数据加载
+        await init();
+        
+        console.log('✅ InsightArxiv 初始化完成');
+        
+    } catch (error) {
+        console.error('❌ 初始化失败:', error);
+        showToast('应用初始化失败，请刷新重试', 'error');
+    }
+});
