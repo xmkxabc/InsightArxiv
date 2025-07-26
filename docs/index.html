@@ -796,5 +796,167 @@
 </div>
 
 <script src="app.js"></script>
+
+<!-- 调试脚本 (仅在调试模式下加载) -->
+<script>
+if (window.location.search.includes('debug=true')) {
+    const debugScript = document.createElement('script');
+    debugScript.src = 'debug-date-filter.js';
+    document.head.appendChild(debugScript);
+}
+</script>
+
+<!-- 性能优化脚本 -->
+<script>
+// 内联性能优化启动器 - 在主脚本加载前就开始优化
+(function() {
+    'use strict';
+    
+    console.log('🚀 启动性能优化...');
+    
+    // 1. 预连接到可能的资源
+    const preconnectHosts = [
+        'https://arxiv.org',
+        'https://cdn.tailwindcss.com',
+        'https://cdn.jsdelivr.net'
+    ];
+    
+    preconnectHosts.forEach(host => {
+        const link = document.createElement('link');
+        link.rel = 'preconnect';
+        link.href = host;
+        document.head.appendChild(link);
+    });
+    
+    // 2. 优化关键资源的加载
+    const criticalCSS = `
+        .paper-card { contain: layout style paint; }
+        .lazy-loading { background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%); }
+        @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+        .lazy-loading { background-size: 200% 100%; animation: shimmer 2s infinite linear; }
+    `;
+    
+    const style = document.createElement('style');
+    style.textContent = criticalCSS;
+    document.head.appendChild(style);
+    
+    // 3. 设置全局性能配置
+    window.performanceConfig = {
+        enableVirtualScroll: true,
+        enableIntelligentPreload: true,
+        enableMemoryOptimization: true,
+        batchSize: 500,
+        chunkSize: 5,
+        lazyLoadThreshold: 15
+    };
+    
+    // 4. 监听页面加载事件
+    window.addEventListener('load', function() {
+        console.log('📊 页面加载完成，准备应用详细优化...');
+        
+        // 延迟加载优化脚本以避免阻塞主要功能
+        setTimeout(() => {
+            const scripts = [
+                'virtual-scroll.js',
+                'optimized-loader.js',
+                'performance-optimizer.js'
+            ];
+            
+            scripts.forEach((script, index) => {
+                setTimeout(() => {
+                    const scriptElement = document.createElement('script');
+                    scriptElement.src = script;
+                    scriptElement.async = true;
+                    scriptElement.onload = () => {
+                        console.log(`✅ ${script} 加载完成`);
+                    };
+                    scriptElement.onerror = () => {
+                        console.warn(`⚠️ ${script} 加载失败`);
+                    };
+                    document.head.appendChild(scriptElement);
+                }, index * 200); // 错开加载时间
+            });
+        }, 1000); // 页面加载1秒后开始
+    });
+    
+    // 5. 早期内存优化
+    if (performance.memory) {
+        const observer = new PerformanceObserver((list) => {
+            for (const entry of list.getEntries()) {
+                if (entry.name.includes('measure') && entry.duration > 100) {
+                    console.warn(`⚡ 检测到耗时操作: ${entry.name} (${Math.round(entry.duration)}ms)`);
+                }
+            }
+        });
+        observer.observe({ entryTypes: ['measure'] });
+    }
+    
+    console.log('✅ 性能优化启动器就绪');
+})();
+</script>
+
+<!-- 用户指南提示 -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // 检查是否为首次访问
+    const isFirstVisit = !localStorage.getItem('arxiv_visited');
+    if (isFirstVisit) {
+        localStorage.setItem('arxiv_visited', 'true');
+        
+        // 显示优化提示
+        setTimeout(() => {
+            if (typeof showToast === 'function') {
+                showToast('💡 提示：系统已自动启用性能优化，享受更快的加载速度！', 'info');
+            }
+        }, 3000);
+    }
+    
+    // 添加性能调试快捷键
+    document.addEventListener('keydown', function(e) {
+        // Ctrl+Shift+P 显示性能统计
+        if (e.ctrlKey && e.shiftKey && e.key === 'P') {
+            e.preventDefault();
+            if (window.performanceOptimizer) {
+                window.performanceOptimizer.getStats();
+            } else {
+                console.log('📊 性能优化器尚未加载');
+            }
+        }
+        
+        // Ctrl+Shift+R 重新应用优化
+        if (e.ctrlKey && e.shiftKey && e.key === 'R') {
+            e.preventDefault();
+            if (window.performanceOptimizer) {
+                window.performanceOptimizer.reapplyOptimizations();
+                if (typeof showToast === 'function') {
+                    showToast('🔄 性能优化已重新应用', 'info');
+                }
+            }
+        }
+        
+        // Ctrl+Shift+V 切换虚拟滚动
+        if (e.ctrlKey && e.shiftKey && e.key === 'V') {
+            e.preventDefault();
+            if (window.VirtualScrollRenderer) {
+                const container = document.getElementById('papers-container');
+                if (container && !container.dataset.virtualEnabled) {
+                    // 启用虚拟滚动
+                    const papers = Array.from(state.allPapers.values());
+                    const virtualRenderer = new VirtualScrollRenderer(container);
+                    virtualRenderer.setPapers(papers);
+                    container.dataset.virtualEnabled = 'true';
+                    if (typeof showToast === 'function') {
+                        showToast('✅ 虚拟滚动已启用', 'success');
+                    }
+                } else {
+                    if (typeof showToast === 'function') {
+                        showToast('ℹ️ 虚拟滚动已在运行或不可用', 'info');
+                    }
+                }
+            }
+        }
+    });
+});
+</script>
 </body>
 </html>
