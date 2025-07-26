@@ -14,7 +14,7 @@ const state = {
         'cs.IR', 'cs.NE', 'math.NA', 'cs.SD', 'cs.SC', 'cs.SY', 'cs.TO'
     ],
     currentSearchResults: [],
-    activeCategoryFilter: 'all',
+    activeCategoryFilter: null, // 修改：用于日期下的分类筛选
     activeDateFilters: new Map(),
     // 新增状态
     theme: 'light',
@@ -136,6 +136,37 @@ const state = {
         syncEnabled: false
     }
 };
+
+// --- 工具函数 ---
+
+// 调试函数：检查日期处理是否正确
+function debugDateParsing(dateString, description = '') {
+    console.log(`🔍 日期解析调试 ${description}:`, {
+        原始字符串: dateString,
+        '使用new Date()': new Date(dateString).toString(),
+        '本地时间': new Date(dateString).toLocaleString(),
+        '仅日期部分': new Date(dateString).toLocaleDateString(),
+        '字符串解析': {
+            年: dateString.split('-')[0],
+            月: parseInt(dateString.split('-')[1], 10),
+            日: parseInt(dateString.split('-')[2], 10)
+        }
+    });
+}
+
+// 根据月份字符串获取论文ID前缀
+function getMonthPrefix(month) {
+    // 例如: "2025-07" -> "2507"
+    return month.replace('-', '').substring(2);
+}
+
+// 筛选指定月份的论文
+function filterPapersByMonth(month) {
+    const monthPrefix = getMonthPrefix(month);
+    return Array.from(state.allPapers.values())
+        .filter(p => p.id && p.id.startsWith(monthPrefix))
+        .sort((a, b) => b.date.localeCompare(a.date));
+}
 
 // --- DOM 元素引用 ---
 const mainContainer = document.getElementById('main-content');
@@ -745,13 +776,140 @@ function hideProgress() {
     }, 300);
 }
 
-// --- 日期筛选功能 (新增) ---
-// 日期筛选状态
+// --- 日期筛选功能 (全面重构) ---
+// 统一的日期筛选状态
 let currentDateFilter = {
     startDate: null,
     endDate: null,
-    period: null
+    period: null,
+    source: null  // 记录筛选来源：'quick', 'custom', 'daily', 'monthly'
 };
+
+// 🔧 核心日期筛选函数 - 统一处理所有类型的日期筛选
+function applyDateFilter(startDate, endDate, period = 'custom', source = 'unknown') {
+    console.log(`🎯 应用日期筛选:`, { startDate, endDate, period, source });
+    
+    // 清除所有其他筛选器的激活状态
+    clearAllDateFilterActiveStates();
+    
+    // 设置新的筛选条件
+    currentDateFilter = { startDate, endDate, period, source };
+    
+    // 更新显示
+    if (startDate && endDate) {
+        if (startDate === endDate) {
+            // 单日筛选
+            const dateParts = startDate.split('-');
+            const month = parseInt(dateParts[1], 10);
+            const day = parseInt(dateParts[2], 10);
+            updateDateFilterDisplay(`${month}月${day}日`);
+        } else {
+            // 日期范围筛选
+            const startParts = startDate.split('-');
+            const endParts = endDate.split('-');
+            const startMonth = parseInt(startParts[1], 10);
+            const startDay = parseInt(startParts[2], 10);
+            const endMonth = parseInt(endParts[1], 10);
+            const endDay = parseInt(endParts[2], 10);
+            updateDateFilterDisplay(`${startMonth}/${startDay} - ${endMonth}/${endDay}`);
+        }
+    } else {
+        updateDateFilterDisplay('');
+    }
+    
+    // 应用筛选
+    if (state.isSearchMode && state.currentSearchResults.length > 0) {
+        renderFilteredResults_FIXED();
+    } else {
+        showToast('日期筛选主要用于搜索结果。', 'info');
+    }
+    
+    console.log(`✅ 日期筛选已应用:`, currentDateFilter);
+    
+    // 🔧 调试：立即验证筛选结果
+    if (state.isSearchMode && state.currentSearchResults.length > 0 && currentDateFilter.startDate === currentDateFilter.endDate) {
+        const targetDate = currentDateFilter.startDate;
+        console.log(`🔬 立即验证筛选效果，目标日期: ${targetDate}`);
+        
+        setTimeout(() => {
+            // 检查当前显示的论文卡片
+            const displayedCards = document.querySelectorAll('#search-results-container .paper-card');
+            console.log(`🔍 当前显示的论文卡片数量: ${displayedCards.length}`);
+            
+            let correctCount = 0;
+            let incorrectCount = 0;
+            
+            displayedCards.forEach((card, index) => {
+                const paperId = card.id.replace('card-', '');
+                const paper = state.allPapers.get(paperId);
+                
+                if (paper && paper.date) {
+                    const paperDate = paper.date.includes('T') ? paper.date.split('T')[0] : paper.date;
+                    if (paperDate === targetDate) {
+                        correctCount++;
+                    } else {
+                        incorrectCount++;
+                        console.error(`❌ 发现错误显示的论文: ${paperId}, 日期 ${paperDate}, 期望 ${targetDate}`);
+                    }
+                }
+            });
+            
+            console.log(`🎯 验证结果: 正确 ${correctCount} 篇, 错误 ${incorrectCount} 篇`);
+            
+            if (incorrectCount > 0) {
+                console.error(`🚨 发现 ${incorrectCount} 篇错误显示的论文！`);
+                showToast(`检测到显示错误，正在自动修复...`, 'warning');
+                // 如果发现错误，重新渲染
+                renderFilteredResults_FIXED();
+            } else if (correctCount > 0) {
+                // 显示成功消息
+                const dateParts = targetDate.split('-');
+                const month = parseInt(dateParts[1], 10);
+                const day = parseInt(dateParts[2], 10);
+                showToast(`✅ 已筛选出 ${month}月${day}日 的 ${correctCount} 篇论文`, 'success');
+            }
+        }, 100); // 延迟100ms等待DOM更新
+    }
+}
+
+// 🧹 清除所有日期筛选按钮的激活状态
+function clearAllDateFilterActiveStates() {
+    // 快捷筛选按钮
+    document.querySelectorAll('.date-quick-filter').forEach(btn => 
+        btn.classList.remove('active'));
+    
+    // 每日分布筛选按钮
+    document.querySelectorAll('#daily-distribution-filters .date-filter-btn').forEach(btn => 
+        btn.classList.remove('active'));
+    
+    // 月份内日期筛选按钮
+    document.querySelectorAll('[data-action="filter-by-date"]').forEach(btn => 
+        btn.classList.remove('active'));
+}
+
+// 🔄 重置日期筛选
+function clearDateFilter() {
+    console.log(`🔄 清除日期筛选`);
+    
+    currentDateFilter = { startDate: null, endDate: null, period: null, source: null };
+    updateDateFilterDisplay('');
+    clearAllDateFilterActiveStates();
+
+    // 清除输入值
+    const startDateInput = document.getElementById('start-date');
+    const endDateInput = document.getElementById('end-date');
+    if (startDateInput) startDateInput.value = '';
+    if (endDateInput) endDateInput.value = '';
+
+    // 应用更改
+    if (state.isSearchMode && state.currentSearchResults.length > 0) {
+        renderFilteredResults_FIXED();
+    } else {
+        resetToDefaultView();
+    }
+
+    showToast('已清除日期筛选');
+}
 
 // 日期筛选相关函数
 function setupDateFilter() {
@@ -835,7 +993,7 @@ function setupDateFilter() {
                         return;
                     }
 
-                    applyCustomDateFilter(startDate, endDate);
+                    applyDateFilter(startDate, endDate, 'custom', 'custom');
                     dateFilterModal.classList.add('hidden');
                 } else {
                     showToast('请选择开始和结束日期', 'warning');
@@ -868,6 +1026,8 @@ function setupDateFilter() {
 }
 
 function applyQuickDateFilter(period) {
+    console.log(`📅 应用快捷日期筛选: ${period}`);
+    
     const today = new Date();
     const year = today.getFullYear();
     const month = today.getMonth();
@@ -920,74 +1080,32 @@ function applyQuickDateFilter(period) {
             displayText = '最近5天';
             break;
         default:
-            // 如果 period 不匹配任何已知值，则不进行任何筛选
-            currentDateFilter = { startDate: null, endDate: null, period: null };
-            updateDateFilterDisplay('');
-            dateFilterPanel.classList.add('hidden');
-            break;
+            // 清除筛选
+            applyDateFilter(null, null, null, 'quick');
+            return;
     }
 
-    // 新增：清除每日分布筛选器的激活状态，确保筛选互斥
-    const dailyFilterBtns = document.querySelectorAll('#daily-distribution-filters .date-filter-btn');
-    dailyFilterBtns.forEach(btn => btn.classList.remove('active'));
-
-    // 激活当前点击的按钮
-    const quickFilterBtns = document.querySelectorAll('.date-quick-filter');
-    quickFilterBtns.forEach(btn => {
-        btn.classList.remove('active');
-        if (btn.dataset.period === period) {
-            btn.classList.add('active');
-        }
+    // 设置按钮激活状态
+    document.querySelectorAll('.date-quick-filter').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.period === period);
     });
 
-    currentDateFilter = { startDate, endDate, period };
-    updateDateFilterDisplay(displayText);
-    filterPapersByDate();
-    dateFilterPanel.classList.add('hidden');
+    // 隐藏面板
+    const dateFilterPanel = document.getElementById('date-filter-panel');
+    if (dateFilterPanel) dateFilterPanel.classList.add('hidden');
+
+    // 应用筛选
+    applyDateFilter(startDate, endDate, period, 'quick');
     showToast(`已应用${displayText}筛选`);
 }
 
+// 🔧 弃用的函数 - 使用统一的 applyDateFilter
 function applyCustomDateFilter(startDate, endDate) {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-
-    currentDateFilter = {
-        startDate,
-        endDate,
-        period: 'custom'
-    };
-
-    const displayText = `${start.getMonth() + 1}/${start.getDate()} - ${end.getMonth() + 1}/${end.getDate()}`;
-    updateDateFilterDisplay(displayText);
-    filterPapersByDate();
-    showToast('已应用自定义日期筛选');
+    console.warn('⚠️ applyCustomDateFilter 已弃用，请使用 applyDateFilter');
+    applyDateFilter(startDate, endDate, 'custom', 'custom');
 }
 
-function clearDateFilter() {
-    currentDateFilter = { startDate: null, endDate: null, period: null };
-    updateDateFilterDisplay('');
-
-    // 清除快捷筛选按钮的激活状态
-    const quickFilterBtns = document.querySelectorAll('.date-quick-filter');
-    quickFilterBtns.forEach(btn => btn.classList.remove('active'));
-
-    // 安全地清除输入值
-    const startDateInput = document.getElementById('start-date');
-    const endDateInput = document.getElementById('end-date');
-    if (startDateInput) startDateInput.value = '';
-    if (endDateInput) endDateInput.value = '';
-
-    // 如果在搜索模式，重新渲染结果。否则，重置默认视图。
-    if (state.currentQuery) {
-        renderFilteredResults();
-    } else {
-        // 如果不在搜索模式，可以重置到默认视图
-        resetToDefaultView();
-    }
-
-    showToast('已清除日期筛选');
-}
-
+// 🔧 统一的显示更新函数
 function updateDateFilterDisplay(text) {
     const dateFilterDisplay = document.getElementById('date-filter-display');
     const activeFilters = document.getElementById('active-filters');
@@ -1005,13 +1123,12 @@ function updateDateFilterDisplay(text) {
     }
 }
 
+// 🔧 弃用的函数 - 使用统一的 applyDateFilter 或 renderFilteredResults
 function filterPapersByDate() {
-    // 如果在搜索模式下，重新渲染搜索结果以应用日期筛选
+    console.warn('⚠️ filterPapersByDate 已弃用，筛选逻辑已集成到 applyDateFilter 中');
     if (state.isSearchMode && state.currentSearchResults.length > 0) {
-        renderFilteredResults();
+        renderFilteredResults_FIXED();
     } else {
-        // 如果不在搜索模式，则筛选当前视图中的论文
-        // (此功能当前主要为搜索结果设计，非搜索模式下可后续增强)
         showToast('日期筛选主要用于搜索结果。', 'info');
     }
 }
@@ -1020,20 +1137,244 @@ function formatDate(date) {
     return date.toISOString().split('T')[0];
 }
 
-// 修改搜索函数以支持日期筛选
-function applyDateFilterToResults(papers) {
+// 🔥 超级严格的日期筛选函数 - 确保绝对准确
+function applySuperStrictDateFilter(papers) {
     if (!currentDateFilter.startDate || !currentDateFilter.endDate) {
+        console.log(`🔍 无日期筛选条件，返回全部 ${papers.length} 篇论文`);
         return papers;
     }
 
-    const startDate = new Date(currentDateFilter.startDate);
-    const endDate = new Date(currentDateFilter.endDate);
-    endDate.setHours(23, 59, 59, 999);
-
-    return papers.filter(paper => {
-        const paperDate = new Date(paper.date);
-        return paperDate >= startDate && paperDate <= endDate;
+    console.log(`🔥 SUPER STRICT 日期筛选开始:`, {
+        筛选条件: currentDateFilter,
+        输入论文数量: papers.length,
+        是否单日筛选: currentDateFilter.startDate === currentDateFilter.endDate
     });
+
+    const isSingleDayFilter = currentDateFilter.startDate === currentDateFilter.endDate;
+    const targetDate = currentDateFilter.startDate;
+    
+    console.log(`🎯 筛选模式: ${isSingleDayFilter ? '单日筛选' : '日期范围筛选'}, 目标日期: ${targetDate}`);
+    
+    // 🔥 超级严格筛选：多重验证
+    const filtered = papers.filter((paper, index) => {
+        console.log(`🔍 检查论文 ${index + 1}/${papers.length}: ${paper.id}`);
+        
+        // 检查1: 论文必须有日期
+        if (!paper.date) {
+            console.warn(`❌ 论文 ${paper.id} 没有日期信息`);
+            return false;
+        }
+        
+        // 检查2: 提取日期字符串
+        let paperDateStr;
+        if (typeof paper.date !== 'string') {
+            console.warn(`❌ 论文 ${paper.id} 日期不是字符串: ${typeof paper.date}`);
+            return false;
+        }
+        
+        if (paper.date.includes('T')) {
+            paperDateStr = paper.date.split('T')[0];
+        } else {
+            paperDateStr = paper.date;
+        }
+        
+        // 检查3: 验证日期格式
+        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+        if (!dateRegex.test(paperDateStr)) {
+            console.warn(`❌ 论文 ${paper.id} 日期格式无效: "${paperDateStr}"`);
+            return false;
+        }
+        
+        // 检查4: 验证目标日期格式
+        if (!dateRegex.test(targetDate)) {
+            console.error(`❌ 目标日期格式无效: "${targetDate}"`);
+            return false;
+        }
+        
+        // 检查5: 执行匹配
+        let matches = false;
+        
+        if (isSingleDayFilter) {
+            // 单日筛选：必须完全匹配
+            matches = paperDateStr === targetDate;
+            
+            // 额外验证：字符串长度和内容
+            if (matches) {
+                if (paperDateStr.length === 10 && targetDate.length === 10) {
+                    console.log(`✅ 论文 ${paper.id} 完全匹配目标日期 ${targetDate}`);
+                } else {
+                    console.warn(`⚠️ 日期长度异常: ${paperDateStr}(${paperDateStr.length}) vs ${targetDate}(${targetDate.length})`);
+                    matches = false;
+                }
+            } else {
+                console.log(`❌ 论文 ${paper.id} 日期 "${paperDateStr}" 不匹配目标 "${targetDate}"`);
+            }
+        } else {
+            // 范围筛选
+            matches = paperDateStr >= currentDateFilter.startDate && paperDateStr <= currentDateFilter.endDate;
+            if (matches) {
+                console.log(`✅ 论文 ${paper.id} 在日期范围内`);
+            }
+        }
+        
+        return matches;
+    });
+
+    console.log(`🔥 SUPER STRICT 筛选完成:`, {
+        筛选前数量: papers.length,
+        筛选后数量: filtered.length,
+        筛选模式: isSingleDayFilter ? '单日筛选' : '范围筛选',
+        目标日期: targetDate
+    });
+
+    // 🔥 终极验证：再次检查结果
+    if (isSingleDayFilter && filtered.length > 0) {
+        console.log(`🔥 执行终极验证...`);
+        const allDates = filtered.map(p => {
+            const paperDate = p.date.includes('T') ? p.date.split('T')[0] : p.date;
+            return paperDate;
+        });
+        
+        const uniqueDates = [...new Set(allDates)];
+        console.log(`🔍 结果中的所有日期: [${allDates.join(', ')}]`);
+        console.log(`🔍 去重后的日期: [${uniqueDates.join(', ')}]`);
+        
+        if (uniqueDates.length === 1 && uniqueDates[0] === targetDate) {
+            console.log(`🎉 终极验证成功：所有 ${filtered.length} 篇论文都属于 ${targetDate}`);
+        } else {
+            console.error(`🚨 终极验证失败！期望只有 [${targetDate}]，实际有 [${uniqueDates.join(', ')}]`);
+            
+            // 最后的强制修正
+            const corrected = filtered.filter(p => {
+                const paperDate = p.date.includes('T') ? p.date.split('T')[0] : p.date;
+                return paperDate === targetDate;
+            });
+            
+            console.log(`🔧 强制修正：从 ${filtered.length} 修正为 ${corrected.length} 篇论文`);
+            return corrected;
+        }
+    }
+
+    return filtered;
+}
+
+// 修改搜索函数以支持日期筛选
+function applyDateFilterToResults(papers) {
+    if (!currentDateFilter.startDate || !currentDateFilter.endDate) {
+        console.log(`🔍 无日期筛选条件，返回全部 ${papers.length} 篇论文`);
+        return papers;
+    }
+
+    console.log(`🔍 应用日期筛选调试:`, {
+        筛选条件: currentDateFilter,
+        输入论文数量: papers.length,
+        是否单日筛选: currentDateFilter.startDate === currentDateFilter.endDate
+    });
+
+    // 确定是单日筛选还是范围筛选
+    const isSingleDayFilter = currentDateFilter.startDate === currentDateFilter.endDate;
+    const targetDate = currentDateFilter.startDate;
+    
+    console.log(`🎯 筛选模式: ${isSingleDayFilter ? '单日筛选' : '日期范围筛选'}, 目标日期: ${targetDate}`);
+    
+    const filtered = papers.filter(paper => {
+        if (!paper.date) {
+            console.warn(`⚠️ 论文 ${paper.id} 没有日期信息`);
+            return false;
+        }
+        
+        // 提取论文的日期部分，确保格式统一为 YYYY-MM-DD
+        let paperDateStr;
+        if (paper.date.includes('T')) {
+            paperDateStr = paper.date.split('T')[0];
+        } else {
+            paperDateStr = paper.date;
+        }
+        
+        // 验证日期格式
+        const isValidDateFormat = /^\d{4}-\d{2}-\d{2}$/.test(paperDateStr);
+        if (!isValidDateFormat) {
+            console.warn(`⚠️ 论文 ${paper.id} 日期格式无效: ${paper.date} -> ${paperDateStr}`);
+            return false;
+        }
+        
+        let matches = false;
+        
+        if (isSingleDayFilter) {
+            // 单日筛选：必须完全匹配目标日期
+            matches = paperDateStr === targetDate;
+            
+            // 🔧 额外验证：确保字符串比较的严格性
+            if (matches) {
+                // 再次验证日期字符串格式和内容
+                if (paperDateStr.length !== 10 || targetDate.length !== 10 || 
+                    !/^\d{4}-\d{2}-\d{2}$/.test(paperDateStr) || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+                    console.warn(`⚠️ 日期格式验证失败: ${paperDateStr} vs ${targetDate}`);
+                    matches = false;
+                } else {
+                    console.log(`✅ 论文 ${paper.id} 严格匹配目标日期 ${targetDate}`);
+                }
+            } else {
+                console.log(`❌ 论文 ${paper.id} 日期 ${paperDateStr} 不匹配目标日期 ${targetDate}`);
+            }
+        } else {
+            // 范围筛选：在开始和结束日期之间
+            matches = paperDateStr >= currentDateFilter.startDate && paperDateStr <= currentDateFilter.endDate;
+        }
+        
+        return matches;
+    });
+
+    console.log(`🎯 日期筛选结果摘要:`, {
+        筛选前数量: papers.length,
+        筛选后数量: filtered.length,
+        筛选模式: isSingleDayFilter ? '单日筛选' : '范围筛选',
+        目标日期: targetDate
+    });
+
+    // 验证筛选结果：如果是单日筛选，确保所有结果都是目标日期
+    if (isSingleDayFilter && filtered.length > 0) {
+        const resultDates = [...new Set(filtered.map(p => 
+            p.date.includes('T') ? p.date.split('T')[0] : p.date
+        ))];
+        
+        console.log(`� 筛选结果包含的日期: ${resultDates.join(', ')}`);
+        
+        if (resultDates.length === 1 && resultDates[0] === targetDate) {
+            console.log(`✅ 单日筛选成功：所有 ${filtered.length} 篇论文都属于 ${targetDate}`);
+        } else {
+            console.error(`❌ 单日筛选失败！期望只有 ${targetDate}，但包含: ${resultDates.join(', ')}`);
+            
+            // 🔧 无论如何都强制过滤，确保只返回目标日期的论文
+            const correctedFiltered = filtered.filter(p => {
+                const paperDate = p.date.includes('T') ? p.date.split('T')[0] : p.date;
+                return paperDate === targetDate;
+            });
+            
+            console.log(`🔧 强制修正：从 ${filtered.length} 修正为 ${correctedFiltered.length} 篇论文`);
+            
+            // 显示有问题的论文信息（调试用）
+            const problemPapers = filtered.filter(p => {
+                const paperDate = p.date.includes('T') ? p.date.split('T')[0] : p.date;
+                return paperDate !== targetDate;
+            });
+            
+            if (problemPapers.length > 0) {
+                console.error(`❌ 被过滤掉的论文 (${problemPapers.length}篇):`, 
+                    problemPapers.slice(0, 3).map(p => ({
+                        id: p.id,
+                        date: p.date,
+                        paperDate: p.date.includes('T') ? p.date.split('T')[0] : p.date,
+                        title: p.title.substring(0, 30) + '...'
+                    }))
+                );
+            }
+            
+            filtered = correctedFiltered; // 使用修正后的结果
+        }
+    }
+
+    return filtered;
 }
 
 // --- 深色模式功能 ---
@@ -3531,13 +3872,56 @@ function updateMonthView(month, allPapersForMonth) {
     const papersListWrapper = document.getElementById(`papers-list-wrapper-${month}`);
     if (!dateFilterWrapper || !papersListWrapper) return;
 
-    const activeFilter = state.activeDateFilters.get(month) || 'all';
+    // 🔥 修复：使用统一的 currentDateFilter 而不是 state.activeDateFilters
+    const activeFilter = currentDateFilter.startDate && currentDateFilter.endDate 
+        ? (currentDateFilter.startDate === currentDateFilter.endDate ? currentDateFilter.startDate : 'range')
+        : 'all';
+
+    console.log(`🏠 首页月份视图更新: ${month}, 活跃筛选: ${activeFilter}`);
 
     renderDateFilter(month, allPapersForMonth, dateFilterWrapper);
 
-    const filteredPapers = (activeFilter === 'all')
-        ? allPapersForMonth
-        : allPapersForMonth.filter(p => p.date === activeFilter);
+    let filteredPapers;
+    if (activeFilter === 'all') {
+        filteredPapers = allPapersForMonth;
+        // 🆕 清除分类筛选状态
+        state.activeCategoryFilter = null;
+        // 隐藏分类筛选器
+        const categorySection = document.getElementById(`category-filter-${month}`);
+        if (categorySection) {
+            categorySection.style.display = 'none';
+        }
+    } else if (activeFilter === 'range') {
+        // 范围筛选
+        filteredPapers = allPapersForMonth.filter(p => {
+            const paperDate = normalizeDateString(p.date);
+            const startDate = normalizeDateString(currentDateFilter.startDate);
+            const endDate = normalizeDateString(currentDateFilter.endDate);
+            return paperDate >= startDate && paperDate <= endDate;
+        });
+        // 🆕 清除分类筛选状态（范围筛选时不显示分类筛选）
+        state.activeCategoryFilter = null;
+        const categorySection = document.getElementById(`category-filter-${month}`);
+        if (categorySection) {
+            categorySection.style.display = 'none';
+        }
+    } else {
+        // 单日筛选
+        filteredPapers = allPapersForMonth.filter(p => {
+            const paperDate = normalizeDateString(p.date);
+            const filterDate = normalizeDateString(activeFilter);
+            return paperDate === filterDate;
+        });
+        
+        // 🆕 如果有分类筛选，继续应用分类筛选
+        if (state.activeCategoryFilter) {
+            filteredPapers = filteredPapers.filter(paper => {
+                return paper.categories && paper.categories.includes(state.activeCategoryFilter);
+            });
+        }
+    }
+
+    console.log(`🏠 首页筛选结果: ${allPapersForMonth.length} → ${filteredPapers.length} 篇论文`);
 
     papersListWrapper.innerHTML = '';
     // 确保在渲染前按日期降序排序，以解决筛选后顺序不正确的问题
@@ -3583,8 +3967,12 @@ function renderDailyDistributionFilters(papers) {
 
     sortedDates.forEach(date => {
         const count = dateCounts[date];
-        const dateObj = new Date(date);
-        const displayDate = `${dateObj.getMonth() + 1}月${dateObj.getDate()}日`;
+        // 修复时区问题：直接从日期字符串解析，避免时区转换导致的日期偏移
+        const dateParts = date.split('-');
+        const year = parseInt(dateParts[0], 10);
+        const month = parseInt(dateParts[1], 10);
+        const day = parseInt(dateParts[2], 10);
+        const displayDate = `${month}月${day}日`;
         buttonsHTML += `<button class="date-filter-btn flex-shrink-0 ${activeDate === date ? 'active' : ''}" data-action="filter-by-distribution-date" data-date="${date}">${displayDate} <span class="filter-count">${count}</span></button>`;
     });
 
@@ -3593,8 +3981,12 @@ function renderDailyDistributionFilters(papers) {
 }
 
 function renderDateFilter(month, papers, container) {
-    // The active filter for a month can be 'all' or a full date like '2025-06-15'
-    const activeDateFilter = state.activeDateFilters.get(month) || 'all';
+    // 🔥 修复：使用统一的 currentDateFilter 而不是 state.activeDateFilters
+    const activeDateFilter = currentDateFilter.startDate && currentDateFilter.endDate 
+        ? (currentDateFilter.startDate === currentDateFilter.endDate ? currentDateFilter.startDate : 'range')
+        : 'all';
+
+    console.log(`🏠 渲染首页日期筛选器: ${month}, 活跃筛选: ${activeDateFilter}`);
 
     // Group papers by full date and get counts
     // FIX: Only count papers whose date property actually falls within the specified month.
@@ -3607,7 +3999,8 @@ function renderDateFilter(month, papers, container) {
     }, {});
 
     // Get unique dates and sort them in descending order
-    const sortedDates = Object.keys(dateCounts).sort((a, b) => new Date(b) - new Date(a));
+    // 优化：直接使用字符串比较而不是Date对象，避免潜在的时区问题
+    const sortedDates = Object.keys(dateCounts).sort((a, b) => b.localeCompare(a));
 
     // "All" button with total count
     let buttonsHTML = `<button class="date-filter-btn ${activeDateFilter === 'all' ? 'active' : ''}" data-action="filter-by-date" data-month="${month}" data-day="all">全部 <span class="filter-count">${papers.length}</span></button>`;
@@ -3616,7 +4009,12 @@ function renderDateFilter(month, papers, container) {
     sortedDates.forEach(fullDate => {
         const dayOfMonth = parseInt(fullDate.split('-')[2], 10); // Display '15' instead of '15日'
         const count = dateCounts[fullDate];
-        const isActive = activeDateFilter === fullDate;
+        // 🔥 修复：比较日期时使用标准化格式
+        const normalizedFullDate = normalizeDateString(fullDate);
+        const normalizedActiveDate = activeDateFilter !== 'all' && activeDateFilter !== 'range' 
+            ? normalizeDateString(activeDateFilter) 
+            : activeDateFilter;
+        const isActive = normalizedActiveDate === normalizedFullDate;
 
         buttonsHTML += `
                 <button class="date-filter-btn ${isActive ? 'active' : ''}" data-action="filter-by-date" data-month="${month}" data-full-date="${fullDate}">
@@ -3624,7 +4022,296 @@ function renderDateFilter(month, papers, container) {
                 </button>
             `;
     });
+    
+    // 添加分类筛选容器
+    buttonsHTML += `
+        <div id="category-filter-${month}" class="category-filter-section" style="display: none;">
+            <div class="category-filter-scroll-wrapper">
+                <!-- 分类按钮将在这里动态生成 -->
+            </div>
+        </div>
+    `;
+    
     container.innerHTML = buttonsHTML;
+}
+
+// 🆕 渲染日期下的分类筛选器
+function renderDateCategoryFilter(month, selectedDate, allPapers) {
+    const categoryContainer = document.getElementById(`category-filter-${month}`);
+    if (!categoryContainer) return;
+    
+    // 获取该日期的论文
+    const papersForDate = allPapers.filter(paper => {
+        const paperDate = normalizeDateString(paper.date);
+        const targetDate = normalizeDateString(selectedDate);
+        return paperDate === targetDate;
+    });
+    
+    if (papersForDate.length === 0) {
+        categoryContainer.style.display = 'none';
+        return;
+    }
+    
+    // 统计分类
+    const categoryStats = {};
+    papersForDate.forEach(paper => {
+        if (paper.categories && Array.isArray(paper.categories)) {
+            paper.categories.forEach(cat => {
+                categoryStats[cat] = (categoryStats[cat] || 0) + 1;
+            });
+        }
+    });
+    
+    // 按论文数量排序分类，显示全部分类（不限制数量）
+    const sortedCategories = Object.entries(categoryStats)
+        .sort(([,a], [,b]) => b - a);
+    
+    if (sortedCategories.length === 0) {
+        categoryContainer.style.display = 'none';
+        return;
+    }
+    
+    // Apple风格简洁分类按钮HTML
+    let categoryHTML = `
+        <div class="category-filter-header">
+            <div class="flex items-center gap-2">
+                <span class="category-filter-title">${selectedDate.split('-')[2]}日分类</span>
+                <span class="category-total-count">${papersForDate.length}篇</span>
+            </div>
+            <button class="category-clear-btn" data-action="clear-category-filter" data-month="${month}">
+                清除
+            </button>
+        </div>
+        <div class="category-filter-scroll-wrapper">
+            <div class="category-filter-buttons">
+    `;
+    
+    sortedCategories.forEach(([category, count]) => {
+        const isActive = state.activeCategoryFilter === category;
+        const activeClass = isActive ? 'category-filter-btn-active' : '';
+        
+        categoryHTML += `
+            <button class="category-filter-btn ${activeClass}" 
+                    data-action="filter-by-category" 
+                    data-category="${category}" 
+                    data-month="${month}"
+                    data-date="${selectedDate}"
+                    title="筛选 ${category} 分类">
+                <span class="category-name">${category}</span>
+                <span class="category-count">${count}</span>
+            </button>
+        `;
+    });
+    
+    categoryHTML += `
+            </div>
+            <div class="category-scroll-indicator">
+                <div class="scroll-hint">›</div>
+            </div>
+        </div>
+    `;
+    
+    const scrollContainer = categoryContainer.querySelector('.category-filter-scroll-wrapper');
+    if (scrollContainer) {
+        scrollContainer.innerHTML = categoryHTML;
+        categoryContainer.style.display = 'block';
+        console.log(`🏷️ 分类筛选器已显示: ${month} - ${selectedDate}, 共 ${sortedCategories.length} 个分类`);
+        
+        // 🆕 增强滚动体验和视觉提示
+        setTimeout(() => {
+            const buttonsContainer = categoryContainer.querySelector('.category-filter-buttons');
+            const scrollIndicator = categoryContainer.querySelector('.category-scroll-indicator');
+            const scrollWrapper = categoryContainer.querySelector('.category-filter-scroll-wrapper');
+            
+            if (buttonsContainer && scrollIndicator && scrollWrapper) {
+                // 检查滚动状态并更新指示器
+                const updateScrollIndicators = () => {
+                    const hasOverflow = buttonsContainer.scrollWidth > buttonsContainer.clientWidth;
+                    const scrollLeft = buttonsContainer.scrollLeft;
+                    const maxScroll = buttonsContainer.scrollWidth - buttonsContainer.clientWidth;
+                    const isAtEnd = Math.abs(maxScroll - scrollLeft) < 5;
+                    const isAtStart = scrollLeft < 5;
+                    
+                    console.log(`📏 滚动状态检查:`, {
+                        hasOverflow,
+                        scrollWidth: buttonsContainer.scrollWidth,
+                        clientWidth: buttonsContainer.clientWidth,
+                        scrollLeft,
+                        maxScroll,
+                        isAtEnd,
+                        isAtStart
+                    });
+                    
+                    // 右侧指示器：有溢出且未到末端时显示
+                    if (hasOverflow && !isAtEnd) {
+                        scrollIndicator.classList.add('visible');
+                    } else {
+                        scrollIndicator.classList.remove('visible');
+                    }
+                    
+                    // 左侧渐变：已滚动时显示
+                    if (hasOverflow && !isAtStart) {
+                        scrollWrapper.classList.add('scrolled');
+                    } else {
+                        scrollWrapper.classList.remove('scrolled');
+                    }
+                };
+                
+                // 初始检查
+                updateScrollIndicators();
+                
+                // 监听滚动事件
+                buttonsContainer.addEventListener('scroll', updateScrollIndicators, { passive: true });
+                
+                // 监听窗口大小变化
+                if (window.ResizeObserver) {
+                    const resizeObserver = new ResizeObserver(() => {
+                        setTimeout(updateScrollIndicators, 100);
+                    });
+                    resizeObserver.observe(buttonsContainer);
+                } else {
+                    window.addEventListener('resize', () => {
+                        setTimeout(updateScrollIndicators, 100);
+                    });
+                }
+                
+                // 增强鼠标滚轮支持
+                buttonsContainer.addEventListener('wheel', (e) => {
+                    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+                        e.preventDefault();
+                        const scrollAmount = e.deltaY > 0 ? 100 : -100;
+                        buttonsContainer.scrollBy({
+                            left: scrollAmount,
+                            behavior: 'smooth'
+                        });
+                    }
+                }, { passive: false });
+                
+                // 添加键盘支持和调试信息
+                buttonsContainer.setAttribute('tabindex', '0');
+                buttonsContainer.addEventListener('keydown', (e) => {
+                    if (e.key === 'ArrowLeft') {
+                        e.preventDefault();
+                        buttonsContainer.scrollBy({ left: -100, behavior: 'smooth' });
+                        console.log('⬅️ 键盘向左滚动');
+                    } else if (e.key === 'ArrowRight') {
+                        e.preventDefault();
+                        buttonsContainer.scrollBy({ left: 100, behavior: 'smooth' });
+                        console.log('➡️ 键盘向右滚动');
+                    }
+                });
+                
+                // 添加点击滚动提示功能
+                if (scrollIndicator) {
+                    scrollIndicator.style.cursor = 'pointer';
+                    scrollIndicator.addEventListener('click', () => {
+                        buttonsContainer.scrollBy({ left: 150, behavior: 'smooth' });
+                        console.log('🖱️ 点击指示器滚动');
+                    });
+                }
+                
+                console.log('🎯 滚动功能已初始化完成');
+            }
+        }, 150);
+    }
+}
+
+function renderInChunksEnhanced(papers, container, expectedDate = null) {
+    console.log(`🔥 ENHANCED RENDER START ===`);
+    console.log(`- Papers to render: ${papers.length}`);
+    console.log(`- Container ID: ${container.id}`);
+    console.log(`- Expected date: ${expectedDate}`);
+    
+    // 🔧 渲染前验证（如果有期望日期）
+    if (expectedDate) {
+        console.log(`🔍 渲染前验证期望日期: ${expectedDate}`);
+        const invalidPapers = papers.filter(p => {
+            if (!p.date) return true;
+            const paperDate = p.date.includes('T') ? p.date.split('T')[0] : p.date;
+            return paperDate !== expectedDate;
+        });
+        
+        if (invalidPapers.length > 0) {
+            console.error(`🚨 发现 ${invalidPapers.length} 篇日期不符的论文:`, 
+                invalidPapers.map(p => ({
+                    id: p.id,
+                    date: p.date,
+                    paperDate: p.date.includes('T') ? p.date.split('T')[0] : p.date
+                }))
+            );
+            
+            // 强制过滤掉无效论文
+            papers = papers.filter(p => {
+                if (!p.date) return false;
+                const paperDate = p.date.includes('T') ? p.date.split('T')[0] : p.date;
+                return paperDate === expectedDate;
+            });
+            
+            console.log(`🔧 强制过滤后剩余: ${papers.length} 篇论文`);
+        }
+    }
+    
+    // 使用标准渲染函数
+    renderInChunks(papers, container);
+    
+    // 🔧 渲染后验证
+    if (expectedDate) {
+        setTimeout(() => {
+            console.log(`🔍 渲染后验证...`);
+            const renderedCards = container.querySelectorAll('.paper-card');
+            console.log(`📊 已渲染的卡片数量: ${renderedCards.length}`);
+            
+            let correctCount = 0;
+            let incorrectCount = 0;
+            const incorrectCards = [];
+            
+            renderedCards.forEach(card => {
+                const paperId = card.id.replace('card-', '');
+                const paper = state.allPapers.get(paperId);
+                
+                if (paper && paper.date) {
+                    const paperDate = paper.date.includes('T') ? paper.date.split('T')[0] : paper.date;
+                    if (paperDate === expectedDate) {
+                        correctCount++;
+                    } else {
+                        incorrectCount++;
+                        incorrectCards.push({
+                            id: paperId,
+                            expected: expectedDate,
+                            actual: paperDate,
+                            element: card
+                        });
+                    }
+                }
+            });
+            
+            console.log(`🎯 渲染后验证结果:`, {
+                正确: correctCount,
+                错误: incorrectCount,
+                期望日期: expectedDate
+            });
+            
+            if (incorrectCount > 0) {
+                console.error(`🚨 发现 ${incorrectCount} 个错误渲染的卡片！`);
+                incorrectCards.forEach(({id, expected, actual, element}) => {
+                    console.error(`❌ 移除错误卡片: ${id}, 期望 ${expected}, 实际 ${actual}`);
+                    if (element && element.parentNode) {
+                        element.parentNode.removeChild(element);
+                    }
+                });
+                
+                showToast(`已自动移除 ${incorrectCount} 篇日期不符的论文`, 'warning');
+            } else {
+                console.log(`✅ 渲染后验证完全通过！`);
+                if (correctCount > 0) {
+                    const dateParts = expectedDate.split('-');
+                    const month = parseInt(dateParts[1], 10);
+                    const day = parseInt(dateParts[2], 10);
+                    showToast(`✅ 已准确显示 ${month}月${day}日 的 ${correctCount} 篇论文`, 'success');
+                }
+            }
+        }, 200); // 给渲染更多时间
+    }
 }
 
 function renderInChunks(papers, container, index = 0) {
@@ -3972,6 +4659,58 @@ async function loadPaperDetails(paperId) {
 
 // 暴露到全局，以便HTML中的onclick可以访问
 window.loadPaperDetails = loadPaperDetails;
+
+// 全局调试函数 - 新增日期筛选调试
+window.debugDateFilter = function() {
+    console.log(`🗓️ 日期筛选调试信息:`);
+    console.log(`- 当前日期筛选条件:`, currentDateFilter);
+    console.log(`- 搜索模式:`, state.isSearchMode);
+    console.log(`- 当前查询:`, state.currentQuery);
+    console.log(`- 搜索结果总数:`, state.currentSearchResults.length);
+    
+    if (state.currentSearchResults.length > 0) {
+        const dates = [...new Set(state.currentSearchResults.map(p => 
+            p.date.includes('T') ? p.date.split('T')[0] : p.date
+        ))].sort();
+        console.log(`- 搜索结果包含的日期:`, dates);
+        
+        // 检查每个日期的论文数量
+        const dateCounts = {};
+        state.currentSearchResults.forEach(p => {
+            const dateStr = p.date.includes('T') ? p.date.split('T')[0] : p.date;
+            dateCounts[dateStr] = (dateCounts[dateStr] || 0) + 1;
+        });
+        console.log(`- 各日期论文数量:`, dateCounts);
+    }
+    
+    // 如果有日期筛选，测试筛选结果
+    if (currentDateFilter.startDate) {
+        const filtered = applyDateFilterToResults(state.currentSearchResults);
+        console.log(`- 筛选后结果数量:`, filtered.length);
+        if (filtered.length > 0) {
+            const filteredDates = [...new Set(filtered.map(p => 
+                p.date.includes('T') ? p.date.split('T')[0] : p.date
+            ))].sort();
+            console.log(`- 筛选后包含的日期:`, filteredDates);
+        }
+    }
+};
+
+// 检查特定日期的论文
+window.checkDatePapers = function(date) {
+    console.log(`📊 检查日期 ${date} 的论文:`);
+    const papers = state.currentSearchResults.filter(p => {
+        const paperDate = p.date.includes('T') ? p.date.split('T')[0] : p.date;
+        return paperDate === date;
+    });
+    
+    console.log(`- 找到 ${papers.length} 篇论文:`);
+    papers.forEach(p => {
+        console.log(`  📄 ${p.id}: ${p.title.substring(0, 50)}...`);
+    });
+    
+    return papers;
+};
 
 // 全局调试函数
 window.debugPaper = function(paperId) {
@@ -4854,7 +5593,7 @@ async function navigateToMonth(month, isChildCall = false) {
 
         // 渲染目标月份
         console.log('Filtering papers for month...');
-        const papersInMonth = Array.from(state.allPapers.values()).filter(p => p.id.startsWith(month.replace('-', '').substring(2)));
+        const papersInMonth = filterPapersByMonth(month);
         console.log(`Found ${papersInMonth.length} papers for month ${month}`);
 
         console.log('Calling renderPapers...');
@@ -4902,7 +5641,7 @@ async function loadNextMonth(triggeredByScroll = true) {
             await fetchMonth(nextMonth);
             
             // 修改为基于ID的过滤逻辑，与navigateToMonth保持一致
-            const monthIdPrefix = nextMonth.replace('-', '').substring(2);
+            const monthIdPrefix = getMonthPrefix(nextMonth);
             console.log(`Filtering papers for month ${nextMonth} using ID prefix: ${monthIdPrefix}`);
             const papersInMonth = Array.from(state.allPapers.values()).filter(p => 
                 p.id && p.id.startsWith(monthIdPrefix)
@@ -5002,43 +5741,147 @@ async function handleSearch() {
                         updateProgress('加载搜索索引...', 20);
                         state.searchIndex = await (await fetch('./data/search_index.json')).json();
                     }
-                } catch (error) { searchResultsContainer.innerHTML = `<p class="text-center text-red-500">索引文件加载失败: ${error.message}。</p>`; return; }
+                } catch (error) { 
+                    searchResultsContainer.innerHTML = `<p class="text-center text-red-500">索引文件加载失败: ${error.message}。</p>`; 
+                    return; 
+                }
 
-                let matchingIds;
-                if (state.categoryIndex[query]) { matchingIds = new Set(state.categoryIndex[query]); }
-                else { matchingIds = new Set(); const queryTokens = query.toLowerCase().split(/\s+/).filter(Boolean); queryTokens.forEach((token, index) => { const foundIds = new Set(); for (const key in state.searchIndex) { if (key.includes(token)) state.searchIndex[key].forEach(id => foundIds.add(id)); } if (index === 0) { matchingIds = foundIds; } else { matchingIds = new Set([...matchingIds].filter(id => foundIds.has(id))); } }); }
+                console.log(`🔍 开始搜索查询: "${query}"`);
+                
+                let matchingIds = new Set();
+                
+                // 1. 检查是否为精确分类查询
+                if (state.categoryIndex[query]) {
+                    console.log(`📂 匹配到分类查询: ${query}`);
+                    matchingIds = new Set(state.categoryIndex[query]);
+                } else {
+                    // 2. 执行关键词搜索
+                    console.log(`🔎 执行关键词搜索: "${query}"`);
+                    const queryTokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+                    console.log(`🔤 搜索词组: ${queryTokens.join(', ')}`);
+                    
+                    queryTokens.forEach((token, index) => {
+                        const foundIds = new Set();
+                        let matchCount = 0;
+                        
+                        // 在搜索索引中查找包含该词汇的条目
+                        for (const key in state.searchIndex) {
+                            if (key.includes(token)) {
+                                state.searchIndex[key].forEach(id => {
+                                    foundIds.add(id);
+                                    matchCount++;
+                                });
+                            }
+                        }
+                        
+                        console.log(`🔤 词汇 "${token}" 匹配到 ${foundIds.size} 个论文ID (${matchCount} 个索引条目)`);
+                        
+                        if (index === 0) {
+                            // 第一个词汇，直接设置结果集
+                            matchingIds = foundIds;
+                        } else {
+                            // 后续词汇，取交集 (AND 操作)
+                            const beforeIntersection = matchingIds.size;
+                            matchingIds = new Set([...matchingIds].filter(id => foundIds.has(id)));
+                            console.log(`🔗 词汇交集：从 ${beforeIntersection} 减少到 ${matchingIds.size}`);
+                        }
+                    });
+                }
 
+                console.log(`🎯 最终搜索结果: ${matchingIds.size} 个论文ID`);
                 requiredMonths = new Set([...matchingIds].map(id => `20${id.substring(0, 2)}-${id.substring(2, 4)}`));
+                console.log(`📅 需要加载的月份: ${[...requiredMonths].join(', ')}`);
             }
 
             const monthsToLoad = [...requiredMonths].filter(m => !state.loadedMonths.has(m));
+            console.log(`📦 需要新加载的月份: ${monthsToLoad.join(', ')}`);
             await fetchWithProgress(monthsToLoad);
 
-            updateProgress('整理结果...', 95);
+            updateProgress('整理搜索结果...', 95);
 
             if (query === 'favorites') {
-                results = Array.from(state.favorites).map(id => state.allPapers.get(id)).filter(Boolean).sort((a, b) => b.date.localeCompare(a.date));
+                results = Array.from(state.favorites)
+                    .map(id => state.allPapers.get(id))
+                    .filter(Boolean)
+                    .sort((a, b) => b.date.localeCompare(a.date));
+                console.log(`❤️ 收藏结果: ${results.length} 篇论文`);
             } else {
-                let finalMatchingIds;
-                if (state.categoryIndex[query]) { finalMatchingIds = new Set(state.categoryIndex[query]); }
-                else {
-                    finalMatchingIds = new Set();
+                // 重新构建最终匹配ID集合，确保准确性
+                let finalMatchingIds = new Set();
+                
+                if (state.categoryIndex[query]) {
+                    // 分类查询
+                    finalMatchingIds = new Set(state.categoryIndex[query]);
+                    console.log(`📂 分类查询最终结果: ${finalMatchingIds.size} 个ID`);
+                } else {
+                    // 关键词查询
                     const queryTokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+                    console.log(`🔎 重新执行关键词搜索以生成最终结果...`);
+                    
                     queryTokens.forEach((token, index) => {
                         const foundIds = new Set();
+                        
                         for (const key in state.searchIndex) {
                             if (key.includes(token)) {
                                 state.searchIndex[key].forEach(id => foundIds.add(id));
                             }
                         }
+                        
                         if (index === 0) {
                             finalMatchingIds = foundIds;
                         } else {
                             finalMatchingIds = new Set([...finalMatchingIds].filter(id => foundIds.has(id)));
                         }
+                        
+                        console.log(`🔤 处理词汇 "${token}": 当前结果集 ${finalMatchingIds.size} 个ID`);
                     });
                 }
-                results = Array.from(finalMatchingIds).map(id => state.allPapers.get(id)).filter(Boolean).sort((a, b) => b.date.localeCompare(a.date));
+                
+                // 从内存中获取论文数据并验证
+                console.log(`📚 从内存获取论文数据...`);
+                results = [];
+                let foundCount = 0;
+                let missingCount = 0;
+                
+                for (const id of finalMatchingIds) {
+                    const paper = state.allPapers.get(id);
+                    if (paper) {
+                        results.push(paper);
+                        foundCount++;
+                    } else {
+                        console.warn(`⚠️ 未找到论文 ID: ${id}`);
+                        missingCount++;
+                    }
+                }
+                
+                // 按日期排序（最新在前）
+                results.sort((a, b) => b.date.localeCompare(a.date));
+                
+                console.log(`📊 搜索结果统计:`, {
+                    匹配ID数量: finalMatchingIds.size,
+                    找到论文数量: foundCount,
+                    缺失论文数量: missingCount,
+                    最终结果数量: results.length
+                });
+                
+                // 验证结果质量
+                if (results.length > 0) {
+                    const dateRange = {
+                        最早: results[results.length - 1].date,
+                        最新: results[0].date
+                    };
+                    console.log(`📅 搜索结果日期范围:`, dateRange);
+                    
+                    // 随机抽样验证
+                    const sampleSize = Math.min(3, results.length);
+                    const samples = results.slice(0, sampleSize);
+                    console.log(`🔍 结果样例:`, samples.map(p => ({
+                        id: p.id,
+                        title: p.title.substring(0, 50) + '...',
+                        date: p.date,
+                        categories: p.categories?.slice(0, 3)
+                    })));
+                }
             }
 
             state.currentSearchResults = results;
@@ -5046,7 +5889,7 @@ async function handleSearch() {
             // 新增：渲染每日分布筛选器
             renderDailyDistributionFilters(results);
 
-            renderFilteredResults();
+            renderFilteredResults_FIXED();
         });
     } finally {
         state.isFetching = false;
@@ -5056,22 +5899,104 @@ async function handleSearch() {
 }
 
 function renderFilteredResults() {
+    console.log(`� ENHANCED renderFilteredResults 开始执行`);
+    console.log(`📊 输入数据:`, {
+        搜索结果总数: state.currentSearchResults.length,
+        当前查询: state.currentQuery,
+        分类筛选: state.activeCategoryFilter,
+        日期筛选状态: currentDateFilter
+    });
+    
     const { currentSearchResults, activeCategoryFilter, currentQuery } = state;
 
-    let filtered = activeCategoryFilter === 'all'
-        ? currentSearchResults
-        : currentSearchResults.filter(paper => paper.categories && paper.categories.includes(activeCategoryFilter));
-
-    // 应用日期筛选 (新增)
-    const originalCountBeforeDateFilter = filtered.length;
-    let dateFilterActive = false;
-    if (currentDateFilter.startDate && currentDateFilter.endDate) {
-        filtered = applyDateFilterToResults(filtered);
-        dateFilterActive = true;
+    // 🔧 Step 0: 彻底清理容器，确保没有残留内容
+    console.log(`🧹 彻底清理搜索结果容器`);
+    if (searchResultsContainer) {
+        // 移除所有子元素
+        while (searchResultsContainer.firstChild) {
+            searchResultsContainer.removeChild(searchResultsContainer.firstChild);
+        }
+        // 强制清空 HTML
+        searchResultsContainer.innerHTML = '';
+        // 重置所有可能的样式和状态
+        searchResultsContainer.className = searchResultsContainer.className.replace(/\s*hidden\s*/g, '');
     }
 
+    // Step 1: 应用分类筛选
+    let filtered = activeCategoryFilter === 'all'
+        ? [...currentSearchResults]  // 创建副本避免修改原数组
+        : currentSearchResults.filter(paper => 
+            paper.categories && paper.categories.includes(activeCategoryFilter)
+        );
+
+    console.log(`🏷️ 分类筛选后: ${filtered.length} 篇论文`);
+
+    // Step 2: 应用日期筛选 - 完全重写，确保绝对准确
+    let dateFilterActive = false;
+    if (currentDateFilter.startDate && currentDateFilter.endDate) {
+        console.log(`� 开始ENHANCED日期筛选`, currentDateFilter);
+        const beforeDateFilter = filtered.length;
+        
+        // 🔧 使用新的超级严格筛选函数
+        filtered = applySuperStrictDateFilter(filtered);
+        dateFilterActive = true;
+        
+        console.log(`📅 ENHANCED日期筛选: ${beforeDateFilter} → ${filtered.length} 篇论文`);
+        
+        // 🔧 三重验证：确保结果绝对正确
+        if (currentDateFilter.startDate === currentDateFilter.endDate && filtered.length > 0) {
+            const targetDate = currentDateFilter.startDate;
+            console.log(`� 开始三重验证，目标日期: ${targetDate}`);
+            
+            // 验证1: 检查每个论文的日期
+            const validation1 = filtered.every(p => {
+                if (!p.date) return false;
+                const paperDate = p.date.includes('T') ? p.date.split('T')[0] : p.date;
+                return paperDate === targetDate;
+            });
+            
+            // 验证2: 统计日期分布
+            const dateDistribution = {};
+            filtered.forEach(p => {
+                if (p.date) {
+                    const paperDate = p.date.includes('T') ? p.date.split('T')[0] : p.date;
+                    dateDistribution[paperDate] = (dateDistribution[paperDate] || 0) + 1;
+                }
+            });
+            
+            // 验证3: 确保只有目标日期
+            const uniqueDates = Object.keys(dateDistribution);
+            const validation3 = uniqueDates.length === 1 && uniqueDates[0] === targetDate;
+            
+            console.log(`🔍 三重验证结果:`, {
+                验证1_每个论文日期正确: validation1,
+                验证2_日期分布: dateDistribution,
+                验证3_只有目标日期: validation3,
+                唯一日期: uniqueDates
+            });
+            
+            if (!validation1 || !validation3) {
+                console.error(`� 验证失败！强制重新筛选`);
+                // 最后的救命稻草：手动重新筛选
+                filtered = filtered.filter(p => {
+                    if (!p.date) return false;
+                    const paperDate = p.date.includes('T') ? p.date.split('T')[0] : p.date;
+                    const isCorrect = paperDate === targetDate;
+                    if (!isCorrect) {
+                        console.error(`🔥 强制移除: ${p.id}, 日期 ${paperDate}, 应为 ${targetDate}`);
+                    }
+                    return isCorrect;
+                });
+            } else {
+                console.log(`✅ 三重验证全部通过！${filtered.length} 篇论文全部正确`);
+            }
+        }
+    }
+
+    // Step 3: 更新UI显示
     searchResultsContainer.innerHTML = '';
 
+    // 构建信息文本
     let infoText;
     if (currentQuery === 'favorites') {
         infoText = `正在显示您的 <strong>${currentSearchResults.length}</strong> 篇收藏`;
@@ -5084,29 +6009,335 @@ function renderFilteredResults() {
     }
 
     if (dateFilterActive) {
-        if (originalCountBeforeDateFilter !== filtered.length) {
-            infoText += `，日期筛选后剩 <strong>${filtered.length}</strong> 篇`;
+        if (currentDateFilter.startDate === currentDateFilter.endDate) {
+            // 单日筛选
+            const targetDateParts = currentDateFilter.startDate.split('-');
+            const month = parseInt(targetDateParts[1], 10);
+            const day = parseInt(targetDateParts[2], 10);
+            infoText += `，筛选 <strong>${month}月${day}日</strong> 共 <strong>${filtered.length}</strong> 篇`;
         } else {
-            infoText += ` (已应用日期筛选)`;
+            // 日期范围筛选
+            infoText += `，日期筛选后剩 <strong>${filtered.length}</strong> 篇`;
         }
     }
 
     infoText += '：';
-
     searchInfoEl.innerHTML = infoText;
 
+    // Step 4: ENHANCED渲染结果 - 带额外验证
     if (filtered.length > 0) {
-        renderInChunks(filtered, searchResultsContainer);
+        console.log(`🔥 开始ENHANCED渲染 ${filtered.length} 篇论文`);
+        
+        // 🔧 渲染前最后一次验证（如果是单日筛选）
+        if (dateFilterActive && currentDateFilter.startDate === currentDateFilter.endDate) {
+            const targetDate = currentDateFilter.startDate;
+            console.log(`🔍 渲染前最后验证，目标日期: ${targetDate}`);
+            
+            const preRenderCheck = filtered.every(p => {
+                if (!p.date) return false;
+                const paperDate = p.date.includes('T') ? p.date.split('T')[0] : p.date;
+                return paperDate === targetDate;
+            });
+            
+            if (!preRenderCheck) {
+                console.error(`🚨 渲染前验证失败！重新过滤...`);
+                filtered = filtered.filter(p => {
+                    if (!p.date) return false;
+                    const paperDate = p.date.includes('T') ? p.date.split('T')[0] : p.date;
+                    return paperDate === targetDate;
+                });
+                console.log(`🔧 重新过滤后: ${filtered.length} 篇论文`);
+            } else {
+                console.log(`✅ 渲染前验证通过`);
+            }
+        }
+        
+        // 🔥 Enhanced渲染函数调用
+        renderInChunksEnhanced(filtered, searchResultsContainer, dateFilterActive ? currentDateFilter.startDate : null);
     } else {
-        searchResultsContainer.innerHTML = `<p class="text-center text-gray-500">在此分类下未找到相关论文。</p>`;
+        searchResultsContainer.innerHTML = `<p class="text-center text-gray-500">没有找到符合条件的论文。</p>`;
     }
+
+    // Step 5: 更新分类按钮状态
     document.querySelectorAll('.category-filter-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.category === activeCategoryFilter);
     });
-    // 在搜索结果列表前添加返回按钮
+
+    // Step 6: 确保返回按钮存在
     if (!document.getElementById('back-to-home-btn')) {
         createBackToHomeButton();
     }
+    
+    console.log(`✅ 【最终修复版】renderFilteredResults 完成，最终显示 ${results.length} 篇论文`);
+}
+
+// 🎯 【最终修复版】彻底解决日期筛选问题
+function renderFilteredResults_FIXED() {
+    console.log(`🎯 【最终修复版】renderFilteredResults 开始执行`);
+    console.log(`📊 输入数据:`, {
+        搜索结果总数: state.currentSearchResults.length,
+        当前查询: state.currentQuery,
+        分类筛选: state.activeCategoryFilter,
+        日期筛选状态: currentDateFilter
+    });
+    
+    // 🎯 Step 0: 彻底清理容器
+    console.log(`🧹 彻底清理搜索结果容器`);
+    if (searchResultsContainer) {
+        searchResultsContainer.innerHTML = '';
+    }
+
+    // 🎯 Step 1: 从原始搜索结果开始，重新应用所有筛选
+    let results = [...state.currentSearchResults];  // 始终从原始数据开始
+    console.log(`📄 原始搜索结果: ${results.length} 篇论文`);
+
+    // 🎯 Step 2: 应用日期筛选（最重要的筛选，优先执行）
+    if (currentDateFilter.startDate && currentDateFilter.endDate) {
+        const targetDate = currentDateFilter.startDate;
+        const isSingleDay = currentDateFilter.startDate === currentDateFilter.endDate;
+        
+        console.log(`📅 应用日期筛选: ${isSingleDay ? '单日' : '范围'}, 目标: ${targetDate}`);
+        
+        const beforeFilter = results.length;
+        results = results.filter(paper => {
+            if (!paper.date) {
+                console.warn(`⚠️ 论文 ${paper.id} 无日期`);
+                return false;
+            }
+            
+            // 🔥 关键修复：标准化日期格式比较
+            const paperDate = normalizeDateString(paper.date);
+            const filterDate = normalizeDateString(targetDate);
+            
+            if (isSingleDay) {
+                // 单日筛选：严格匹配
+                const match = paperDate === filterDate;
+                if (!match) {
+                    console.log(`❌ 日期不匹配: ${paper.id} [${paperDate}] ≠ [${filterDate}]`);
+                }
+                return match;
+            } else {
+                // 范围筛选
+                const startDate = normalizeDateString(currentDateFilter.startDate);
+                const endDate = normalizeDateString(currentDateFilter.endDate);
+                return paperDate >= startDate && paperDate <= endDate;
+            }
+        });
+        
+        console.log(`📅 日期筛选结果: ${beforeFilter} → ${results.length} 篇论文`);
+        
+        // 🎯 验证单日筛选结果
+        if (isSingleDay && results.length > 0) {
+            const allDates = results.map(p => normalizeDateString(p.date));
+            const uniqueDates = [...new Set(allDates)];
+            const expectedDate = normalizeDateString(targetDate);
+            
+            console.log(`📊 筛选结果日期分布: [${uniqueDates.join(', ')}]`);
+            console.log(`📊 期望日期: [${expectedDate}]`);
+            
+            if (uniqueDates.length === 1 && uniqueDates[0] === expectedDate) {
+                console.log(`✅ 日期筛选验证通过: 所有 ${results.length} 篇论文都属于 ${expectedDate}`);
+            } else {
+                console.error(`❌ 日期筛选验证失败! 期望: [${expectedDate}], 实际: [${uniqueDates.join(', ')}]`);
+                // 强制二次筛选
+                results = results.filter(p => normalizeDateString(p.date) === expectedDate);
+                console.log(`🔧 强制二次筛选后: ${results.length} 篇论文`);
+            }
+        }
+    }
+
+    // 🎯 Step 3: 应用分类筛选
+    if (state.activeCategoryFilter !== 'all') {
+        const beforeFilter = results.length;
+        results = results.filter(paper => 
+            paper.categories && paper.categories.includes(state.activeCategoryFilter)
+        );
+        console.log(`🏷️ 分类筛选 [${state.activeCategoryFilter}]: ${beforeFilter} → ${results.length} 篇论文`);
+    }
+
+    console.log(`🎯 最终筛选结果: ${results.length} 篇论文`);
+
+    // 🎯 Step 4: 更新信息显示
+    updateSearchInfoFixed(results.length);
+
+    // 🎯 Step 5: 渲染结果
+    if (results.length > 0) {
+        console.log(`🎨 开始渲染 ${results.length} 篇论文`);
+        renderInChunks(results, searchResultsContainer);
+        
+        // 显示成功消息
+        if (currentDateFilter.startDate === currentDateFilter.endDate && currentDateFilter.startDate) {
+            const dateParts = currentDateFilter.startDate.split('-');
+            const month = parseInt(dateParts[1], 10);
+            const day = parseInt(dateParts[2], 10);
+            showToast(`✅ 已筛选出 ${month}月${day}日 的 ${results.length} 篇论文`, 'success');
+        }
+    } else {
+        searchResultsContainer.innerHTML = `<p class="text-center text-gray-500 py-8">没有找到符合条件的论文。</p>`;
+        
+        if (currentDateFilter.startDate) {
+            const dateParts = currentDateFilter.startDate.split('-');
+            const month = parseInt(dateParts[1], 10);
+            const day = parseInt(dateParts[2], 10);
+            showToast(`${month}月${day}日 没有找到相关论文`, 'info');
+        }
+    }
+
+    // 🎯 Step 6: 更新分类按钮状态
+    document.querySelectorAll('.category-filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.category === state.activeCategoryFilter);
+    });
+
+    // 🎯 Step 7: 确保返回按钮存在
+    if (!document.getElementById('back-to-home-btn')) {
+        createBackToHomeButton();
+    }
+    
+    console.log(`✅ 【最终修复版】renderFilteredResults 完成: ${results.length} 篇论文`);
+}
+
+// 🔥 关键函数：标准化日期字符串
+function normalizeDateString(dateStr) {
+    if (!dateStr) return '';
+    
+    // 如果包含 T，提取日期部分
+    if (dateStr.includes('T')) {
+        dateStr = dateStr.split('T')[0];
+    }
+    
+    // 确保格式为 YYYY-MM-DD
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+        const year = parts[0].padStart(4, '0');
+        const month = parts[1].padStart(2, '0');
+        const day = parts[2].padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+    
+    return dateStr;
+}
+
+// � 带分类筛选的月份视图更新
+function updateMonthViewWithCategoryFilter(month, allPapersForMonth, selectedDate, category) {
+    const papersListWrapper = document.getElementById(`papers-list-wrapper-${month}`);
+    if (!papersListWrapper) return;
+
+    console.log(`🏷️ 应用分类筛选: ${month} - ${selectedDate} - ${category}`);
+
+    // 先按日期筛选
+    let filteredPapers = allPapersForMonth.filter(p => {
+        const paperDate = normalizeDateString(p.date);
+        const targetDate = normalizeDateString(selectedDate);
+        return paperDate === targetDate;
+    });
+
+    // 再按分类筛选
+    filteredPapers = filteredPapers.filter(paper => {
+        return paper.categories && paper.categories.includes(category);
+    });
+
+    console.log(`🏷️ 分类筛选结果: ${filteredPapers.length} 篇论文`);
+
+    papersListWrapper.innerHTML = '';
+    // 确保在渲染前按日期降序排序
+    filteredPapers.sort((a, b) => b.date.localeCompare(a.date));
+    if (filteredPapers.length > 0) {
+        renderInChunks(filteredPapers, papersListWrapper);
+    } else {
+        papersListWrapper.innerHTML = `<p class="text-center text-gray-500 py-4">该日期下没有"${category}"分类的论文。</p>`;
+    }
+}
+
+// �🏠 更新所有月份的视图（首页模式）
+function updateAllMonthViews() {
+    console.log('🏠 更新所有月份视图');
+    
+    // 获取所有已加载的月份
+    state.loadedMonths.forEach(month => {
+        const papersForMonth = filterPapersByMonth(month);
+        updateMonthView(month, papersForMonth);
+        
+        // 🆕 如果有活跃的日期筛选且不是"全部"，尝试重新渲染分类筛选器
+        if (currentDateFilter.startDate && currentDateFilter.startDate === currentDateFilter.endDate) {
+            renderDateCategoryFilter(month, currentDateFilter.startDate, papersForMonth);
+        }
+    });
+}
+
+// 🎯 更新所有日期按钮的状态
+function updateAllDateButtonStates() {
+    console.log('🎯 更新所有日期按钮状态');
+    
+    // 更新所有首页日期按钮状态
+    document.querySelectorAll('.date-filter-btn').forEach(btn => {
+        const action = btn.dataset.action;
+        const fullDate = btn.dataset.fullDate;
+        const day = btn.dataset.day;
+        
+        if (action === 'filter-by-date') {
+            // 首页日期按钮
+            const filterValue = fullDate || day;
+            const isActive = determineButtonActiveState(filterValue);
+            btn.classList.toggle('active', isActive);
+        }
+    });
+    
+    // 更新搜索结果日期按钮状态
+    document.querySelectorAll('[data-action="filter-by-distribution-date"]').forEach(btn => {
+        const date = btn.dataset.date;
+        const isActive = determineButtonActiveState(date);
+        btn.classList.toggle('active', isActive);
+    });
+}
+
+// 🎯 判断按钮是否应该激活
+function determineButtonActiveState(filterValue) {
+    if (!filterValue) return false;
+    
+    if (filterValue === 'all') {
+        return !currentDateFilter.startDate || !currentDateFilter.endDate;
+    }
+    
+    if (currentDateFilter.startDate && currentDateFilter.endDate) {
+        if (currentDateFilter.startDate === currentDateFilter.endDate) {
+            // 单日筛选
+            const normalizedFilterValue = normalizeDateString(filterValue);
+            const normalizedCurrentDate = normalizeDateString(currentDateFilter.startDate);
+            return normalizedFilterValue === normalizedCurrentDate;
+        }
+    }
+    
+    return false;
+}
+
+// 🎯 简化的信息更新函数
+function updateSearchInfoFixed(resultCount) {
+    const { currentSearchResults, activeCategoryFilter, currentQuery } = state;
+    
+    let infoText;
+    if (currentQuery === 'favorites') {
+        infoText = `正在显示您的 <strong>${currentSearchResults.length}</strong> 篇收藏`;
+    } else {
+        infoText = `为您找到 <strong>${currentSearchResults.length}</strong> 篇关于 "<strong>${currentQuery}</strong>" 的论文`;
+    }
+
+    if (activeCategoryFilter !== 'all') {
+        infoText += `，分类筛选后`;
+    }
+
+    if (currentDateFilter.startDate && currentDateFilter.endDate) {
+        if (currentDateFilter.startDate === currentDateFilter.endDate) {
+            const dateParts = currentDateFilter.startDate.split('-');
+            const month = parseInt(dateParts[1], 10);
+            const day = parseInt(dateParts[2], 10);
+            infoText += `，${month}月${day}日筛选后`;
+        } else {
+            infoText += `，日期筛选后`;
+        }
+    }
+
+    infoText += ` 共 <strong>${resultCount}</strong> 篇：`;
+    searchInfoEl.innerHTML = infoText;
 }
 function createBackToHomeButton() {
     const backToHomeBtn = document.createElement('button');
@@ -5326,12 +6557,97 @@ function setupGlobalEventListeners() {
             case 'remove-tag': removePaperTag(paperId, tag); break;
             case 'rate-paper': setPaperRating(paperId, parseInt(rating)); break;
             case 'filter-by-date':
-                const filterValue = fullDate || day;
-                state.activeDateFilters.set(month, filterValue);
-                const papersForMonth = Array.from(state.allPapers.values())
-                    .filter(p => p.id.startsWith(month.replace('-', '').substring(2)))
-                    .sort((a, b) => b.date.localeCompare(a.date)); // 对数据进行排序
-                updateMonthView(month, papersForMonth);
+                // 🔧 FIXED: 更安全的获取属性值
+                const filterValue = target.dataset.fullDate || target.dataset.day;
+                console.log(`🎯 日期按钮点击详情:`, {
+                    filterValue,
+                    fullDate: target.dataset.fullDate,
+                    day: target.dataset.day,
+                    action: target.dataset.action,
+                    element: target
+                });
+                
+                // 🔥 修复：使用统一的 currentDateFilter 对象
+                if (filterValue === 'all') {
+                    currentDateFilter = { startDate: null, endDate: null, period: null };
+                    updateDateFilterDisplay('');
+                    console.log(`🔄 重置日期筛选`);
+                } else {
+                    // 确保使用正确的日期格式
+                    const normalizedDate = normalizeDateString(filterValue);
+                    currentDateFilter = { 
+                        startDate: normalizedDate, 
+                        endDate: normalizedDate, 
+                        period: 'custom' 
+                    };
+                    
+                    const dateParts = normalizedDate.split('-');
+                    const month = parseInt(dateParts[1], 10);
+                    const day = parseInt(dateParts[2], 10);
+                    updateDateFilterDisplay(`${month}/${day}`);
+                    console.log(`🎯 设置精准日期筛选:`, currentDateFilter);
+                }
+                
+                // 🎯 立即应用筛选
+                if (state.isSearchMode && state.currentSearchResults.length > 0) {
+                    console.log(`🔍 搜索模式：应用筛选`);
+                    renderFilteredResults_FIXED();
+                } else {
+                    // 首页模式：更新所有月份的视图
+                    console.log(`🏠 首页模式：更新所有月份视图`);
+                    updateAllMonthViews();
+                }
+                
+                // 🎯 更新所有日期按钮的状态
+                updateAllDateButtonStates();
+                
+                // 🆕 如果选择了特定日期，显示分类筛选器
+                if (filterValue !== 'all' && target.dataset.month) {
+                    const month = target.dataset.month;
+                    const papersForMonth = filterPapersByMonth(month);
+                    renderDateCategoryFilter(month, filterValue, papersForMonth);
+                } else {
+                    // 隐藏所有分类筛选器
+                    document.querySelectorAll('.category-filter-section').forEach(section => {
+                        section.style.display = 'none';
+                    });
+                    state.activeCategoryFilter = null;
+                }
+                break;
+            case 'filter-by-category':
+                // 🆕 处理分类筛选
+                const category = target.dataset.category;
+                const categoryMonth = target.dataset.month;
+                const categoryDate = target.dataset.date;
+                
+                console.log(`🏷️ 分类筛选: ${category} (${categoryDate})`);
+                
+                state.activeCategoryFilter = category;
+                
+                // 更新该月份的视图，应用分类筛选
+                const papersForCategoryMonth = filterPapersByMonth(categoryMonth);
+                updateMonthViewWithCategoryFilter(categoryMonth, papersForCategoryMonth, categoryDate, category);
+                
+                // 更新分类按钮状态
+                document.querySelectorAll(`#category-filter-${categoryMonth} .category-filter-btn`).forEach(btn => {
+                    btn.classList.toggle('category-filter-btn-active', btn.dataset.category === category);
+                });
+                break;
+            case 'clear-category-filter':
+                // 🆕 清除分类筛选
+                const clearMonth = target.dataset.month;
+                console.log(`🧹 清除分类筛选: ${clearMonth}`);
+                
+                state.activeCategoryFilter = null;
+                
+                // 重新应用日期筛选（不含分类筛选）
+                const papersForClearMonth = filterPapersByMonth(clearMonth);
+                updateMonthView(clearMonth, papersForClearMonth);
+                
+                // 更新分类按钮状态
+                document.querySelectorAll(`#category-filter-${clearMonth} .category-filter-btn`).forEach(btn => {
+                    btn.classList.remove('category-filter-btn-active');
+                });
                 break;
         }
     });
@@ -5358,7 +6674,7 @@ function setupGlobalEventListeners() {
 
         if (action === 'filter-category') {
             state.activeCategoryFilter = category;
-            renderFilteredResults();
+            renderFilteredResults_FIXED();
         } else if (action === 'search-tag') {
             performTagSearch(tagValue);
         }
@@ -5372,6 +6688,12 @@ function setupGlobalEventListeners() {
             if (!target || state.isFetching) return;
  
             const date = target.dataset.date;
+            console.log(`🗓️ 点击日期筛选按钮: ${date}`);
+            console.log(`📊 点击前状态:`, {
+                当前搜索结果数量: state.currentSearchResults.length,
+                当前查询: state.currentQuery,
+                搜索模式: state.isSearchMode
+            });
  
             // 新增：清除快捷筛选按钮的激活状态，确保筛选互斥
             const quickFilterBtns = document.querySelectorAll('.date-quick-filter');
@@ -5385,11 +6707,41 @@ function setupGlobalEventListeners() {
             if (date === 'all') {
                 currentDateFilter = { startDate: null, endDate: null, period: null };
                 updateDateFilterDisplay('');
+                console.log(`🔄 重置日期筛选`);
             } else {
                 currentDateFilter = { startDate: date, endDate: date, period: 'custom' };
-                updateDateFilterDisplay(`${new Date(date).getMonth() + 1}/${new Date(date).getDate()}`);
+                // 修复时区问题：直接从日期字符串解析，避免时区转换导致的日期偏移
+                const dateParts = date.split('-');
+                const month = parseInt(dateParts[1], 10);
+                const day = parseInt(dateParts[2], 10);
+                updateDateFilterDisplay(`${month}/${day}`);
+                console.log(`🔥 设置ENHANCED日期筛选:`, currentDateFilter);
+                
+                // 详细检查搜索结果中的日期分布
+                const dateStats = {};
+                state.currentSearchResults.forEach(paper => {
+                    const paperDate = paper.date.includes('T') ? paper.date.split('T')[0] : paper.date;
+                    dateStats[paperDate] = (dateStats[paperDate] || 0) + 1;
+                });
+                console.log(`� 搜索结果日期分布:`, dateStats);
+                
+                // 检查即将筛选的特定日期
+                const targetPapers = state.currentSearchResults.filter(paper => {
+                    const paperDate = paper.date.includes('T') ? paper.date.split('T')[0] : paper.date;
+                    return paperDate === date;
+                });
+                console.log(`🎯 目标日期 ${date} 的论文数量: ${targetPapers.length}`);
+                if (targetPapers.length > 0) {
+                    console.log(`📄 目标日期论文样例:`, targetPapers.slice(0, 3).map(p => ({
+                        id: p.id,
+                        title: p.title.substring(0, 50) + '...',
+                        date: p.date
+                    })));
+                }
             }
-            renderFilteredResults();
+            
+            console.log(`�📊 筛选前搜索结果数量: ${state.currentSearchResults.length}`);
+            renderFilteredResults_FIXED();
         });
     }
 
@@ -5532,8 +6884,8 @@ function setupGlobalEventListeners() {
         } else {
             state.activeDateFilters.set(month, day);
         }
-        const papersInMonth = Array.from(state.allPapers.values()).filter(p => p.id.startsWith(month.replace('-', '').substring(2)));
-        updateMonthView(month, papersInMonth.sort((a, b) => b.date.localeCompare(a.date))); // 对数据进行排序
+        const papersInMonth = filterPapersByMonth(month);
+        updateMonthView(month, papersInMonth); // filterPapersByMonth 已经包含排序
     }
 
     // 个性化功能事件监听器
