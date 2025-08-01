@@ -8,10 +8,7 @@ const state = {
     mainCategories: ['cs.CV', 'cs.LG', 'cs.CL', 'cs.AI', 'cs.RO', 'stat.ML'],
     // 新增：用户提供的支持分类列表 (已去重)
     supportedCategories: [
-        'cs.CR', 'cs.AI', 'cs.LG', 'cs.MA', 'cs.RO', 'cs.CV', 'cs.HC', 'cs.ET', 'cs.SE', 
-        'cs.SI', 'cs.NI', 'cs.IT', 'cs.AR', 'cs.DC', 'cs.CY', 'cs.CE', 'cs.FL', 
-        'eess.SY', 'eess.SP', 'eess.IV', 'eess.AS', 'cs.CL', 'cs.DS', 'cs.GR', 
-        'cs.IR', 'cs.NE', 'math.NA', 'cs.SD', 'cs.SC', 'cs.SY', 'cs.TO'
+        "cs.AI", "cs.AR", "cs.CC", "cs.CE", "cs.CG", "cs.CL", "cs.CR", "cs.CV", "cs.CY", "cs.DB", "cs.DC", "cs.DL", "cs.DM", "cs.DS", "cs.ET", "cs.FL", "cs.GL", "cs.GR", "cs.GT", "cs.HC", "cs.IR", "cs.IT", "cs.LG", "cs.LO", "cs.MA", "cs.MM", "cs.MS", "cs.NA", "cs.NE", "cs.NI", "cs.OH", "cs.OS", "cs.PF", "cs.PL", "cs.RO", "cs.SC", "cs.SD", "cs.SE", "cs.SI", "cs.SY", "eess.AS", "eess.IV", "eess.SP", "eess.SY", "math.NA", "stat.AP", "q-fin.MF"
     ],
     currentSearchResults: [],
     activeCategoryFilter: null, // 修改：用于日期下的分类筛选
