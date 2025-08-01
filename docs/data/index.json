@@ -1,3 +1,12 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:e28bf38878cbd23068eccf380d8671bf52ca35532e014bdf70057eedc1a8df81
-size 189
+{
+  "availableMonths": [
+    "2025-08",
+    "2025-07",
+    "2025-06",
+    "2025-05",
+    "2025-04",
+    "2025-03"
+  ],
+  "totalPaperCount": 38400,
+  "lastUpdated": "2025-08-02"
+}

@@ -12,6 +12,3 @@ ai/.env
 test/*
 .idea/
 
-# Large search index files (use chunked versions instead)
-docs/data/search_index.json
-docs/data/search_index.json.gz

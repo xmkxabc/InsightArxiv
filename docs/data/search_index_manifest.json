@@ -1,3 +1,179 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:642984e995bac71762857713d4ee11a5e67c2490178e1c2c3db8f0b2a57df88c
-size 3701
+{
+  "version": "2.0",
+  "chunked": true,
+  "description": "分块搜索索引，优化加载性能",
+  "chunks": [
+    {
+      "key": "0",
+      "filename": "search_index_0.json",
+      "wordCount": 113,
+      "sizeMB": 0.01
+    },
+    {
+      "key": "a",
+      "filename": "search_index_a.json",
+      "wordCount": 2232,
+      "sizeMB": 3.68
+    },
+    {
+      "key": "b",
+      "filename": "search_index_b.json",
+      "wordCount": 1269,
+      "sizeMB": 1.1
+    },
+    {
+      "key": "c",
+      "filename": "search_index_c.json",
+      "wordCount": 3024,
+      "sizeMB": 4.04
+    },
+    {
+      "key": "d",
+      "filename": "search_index_d.json",
+      "wordCount": 2150,
+      "sizeMB": 3.07
+    },
+    {
+      "key": "e",
+      "filename": "search_index_e.json",
+      "wordCount": 1557,
+      "sizeMB": 3.18
+    },
+    {
+      "key": "f",
+      "filename": "search_index_f.json",
+      "wordCount": 1253,
+      "sizeMB": 1.89
+    },
+    {
+      "key": "g",
+      "filename": "search_index_g.json",
+      "wordCount": 940,
+      "sizeMB": 1.19
+    },
+    {
+      "key": "h",
+      "filename": "search_index_h.json",
+      "wordCount": 1006,
+      "sizeMB": 0.84
+    },
+    {
+      "key": "i",
+      "filename": "search_index_i.json",
+      "wordCount": 1663,
+      "sizeMB": 2.78
+    },
+    {
+      "key": "j",
+      "filename": "search_index_j.json",
+      "wordCount": 208,
+      "sizeMB": 0.07
+    },
+    {
+      "key": "k",
+      "filename": "search_index_k.json",
+      "wordCount": 319,
+      "sizeMB": 0.21
+    },
+    {
+      "key": "l",
+      "filename": "search_index_l.json",
+      "wordCount": 1120,
+      "sizeMB": 2.07
+    },
+    {
+      "key": "m",
+      "filename": "search_index_m.json",
+      "wordCount": 2167,
+      "sizeMB": 2.32
+    },
+    {
+      "key": "n",
+      "filename": "search_index_n.json",
+      "wordCount": 801,
+      "sizeMB": 1.0
+    },
+    {
+      "key": "o",
+      "filename": "search_index_o.json",
+      "wordCount": 911,
+      "sizeMB": 1.19
+    },
+    {
+      "key": "p",
+      "filename": "search_index_p.json",
+      "wordCount": 2436,
+      "sizeMB": 3.27
+    },
+    {
+      "key": "q",
+      "filename": "search_index_q.json",
+      "wordCount": 246,
+      "sizeMB": 0.25
+    },
+    {
+      "key": "r",
+      "filename": "search_index_r.json",
+      "wordCount": 2051,
+      "sizeMB": 2.72
+    },
+    {
+      "key": "s",
+      "filename": "search_index_s.json",
+      "wordCount": 3266,
+      "sizeMB": 4.62
+    },
+    {
+      "key": "t",
+      "filename": "search_index_t.json",
+      "wordCount": 1587,
+      "sizeMB": 2.44
+    },
+    {
+      "key": "u",
+      "filename": "search_index_u.json",
+      "wordCount": 885,
+      "sizeMB": 0.69
+    },
+    {
+      "key": "v",
+      "filename": "search_index_v.json",
+      "wordCount": 716,
+      "sizeMB": 0.84
+    },
+    {
+      "key": "w",
+      "filename": "search_index_w.json",
+      "wordCount": 614,
+      "sizeMB": 1.11
+    },
+    {
+      "key": "x",
+      "filename": "search_index_x.json",
+      "wordCount": 76,
+      "sizeMB": 0.01
+    },
+    {
+      "key": "y",
+      "filename": "search_index_y.json",
+      "wordCount": 74,
+      "sizeMB": 0.09
+    },
+    {
+      "key": "z",
+      "filename": "search_index_z.json",
+      "wordCount": 92,
+      "sizeMB": 0.03
+    },
+    {
+      "key": "zh",
+      "filename": "search_index_zh.json",
+      "wordCount": 10045,
+      "sizeMB": 1.01
+    }
+  ],
+  "totalWords": 42821,
+  "totalChunks": 28,
+  "totalSizeMB": 45.73,
+  "generatedAt": "2025-08-02T01:13:58.644262"
+}
