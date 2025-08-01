@@ -1,1 +1,2 @@
-docs/data/*.json filter=lfs diff=lfs merge=lfs -text
+# All docs files use regular Git management
+docs/data/*.json text
