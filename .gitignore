@@ -12,3 +12,6 @@ ai/.env
 test/*
 .idea/
 
+# Large search index files (use Git LFS or compressed versions instead)
+docs/data/search_index.json
+
