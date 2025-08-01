@@ -1,7 +1,6 @@
 import os
 import glob
 import json
-import gzip
 import re
 from collections import defaultdict, Counter
 from datetime import datetime
@@ -22,14 +21,18 @@ STOP_WORDS = {
 }
 
 def create_chunked_index(search_index: dict, output_dir: str):
-    """创建分块的搜索索引（仅对英文词汇分块）"""
+    """创建分块的搜索索引（优化版本）"""
     
     # 按字母分块（仅英文词汇）
     chunks = defaultdict(dict)
     chinese_words = {}  # 存储中文词汇
+    stats = {"total_words": 0, "chunks_created": 0, "total_size_mb": 0}
     
+    print("开始分词和分块...")
     for word, paper_ids in search_index.items():
+        stats["total_words"] += 1
         first_char = word[0].lower()
+        
         # 只对英文词汇进行分块
         if first_char.isalpha() and ord(first_char) < 128:  # ASCII字母
             chunks[first_char][word] = paper_ids
@@ -42,18 +45,27 @@ def create_chunked_index(search_index: dict, output_dir: str):
     # 如果有中文词汇，创建专门的中文分块
     if chinese_words:
         chunks['zh'] = chinese_words
+        print(f"中文词汇分块: {len(chinese_words)} 个词汇")
     
-    # 保存分块文件
+    # 保存分块文件（优化写入）
     chunk_manifest = []
     
+    print("写入分块文件...")
     for chunk_key, chunk_data in chunks.items():
+        if not chunk_data:  # 跳过空分块
+            continue
+            
         chunk_filename = f"search_index_{chunk_key}.json"
         chunk_path = os.path.join(output_dir, chunk_filename)
         
+        # 使用更紧凑的JSON格式
         with open(chunk_path, 'w', encoding='utf-8') as f:
             json.dump(chunk_data, f, ensure_ascii=False, separators=(',', ':'))
         
         chunk_size = os.path.getsize(chunk_path) / (1024 * 1024)
+        stats["total_size_mb"] += chunk_size
+        stats["chunks_created"] += 1
+        
         chunk_manifest.append({
             "key": chunk_key,
             "filename": chunk_filename,
@@ -61,27 +73,39 @@ def create_chunked_index(search_index: dict, output_dir: str):
             "sizeMB": round(chunk_size, 2)
         })
         
-        print(f"创建分块 {chunk_key}: {len(chunk_data)} 词汇, {chunk_size:.2f} MB")
+        print(f"✅ 分块 '{chunk_key}': {len(chunk_data)} 词汇, {chunk_size:.2f} MB")
     
     # 保存分块清单
     manifest_path = os.path.join(output_dir, "search_index_manifest.json")
-    with open(manifest_path, 'w', encoding='utf-8') as f:
-        json.dump({
-            "version": "1.0",
-            "chunked": True,
-            "chunks": chunk_manifest,
-            "totalWords": sum(chunk["wordCount"] for chunk in chunk_manifest)
-        }, f, indent=2, ensure_ascii=False)
+    manifest_data = {
+        "version": "2.0",
+        "chunked": True,
+        "description": "分块搜索索引，优化加载性能",
+        "chunks": sorted(chunk_manifest, key=lambda x: x["key"]),
+        "totalWords": stats["total_words"],
+        "totalChunks": stats["chunks_created"],
+        "totalSizeMB": round(stats["total_size_mb"], 2),
+        "generatedAt": datetime.now().isoformat()
+    }
     
-    print(f"创建了 {len(chunks)} 个分块，总计 {sum(len(chunk) for chunk in chunks.values())} 词汇")
+    with open(manifest_path, 'w', encoding='utf-8') as f:
+        json.dump(manifest_data, f, indent=2, ensure_ascii=False)
+    
+    print(f"\n🎉 分块索引创建完成:")
+    print(f"   - 总词汇数: {stats['total_words']:,}")
+    print(f"   - 分块数量: {stats['chunks_created']}")
+    print(f"   - 总大小: {stats['total_size_mb']:.2f} MB")
+    print(f"   - 平均分块大小: {stats['total_size_mb']/stats['chunks_created']:.2f} MB")
+    
+    return manifest_data
 
 def build_optimized_search_index(search_index_dict: dict, output_dir: str):
-    """构建优化的搜索索引（压缩和分块版本）"""
+    """构建优化的搜索索引（仅分块版本，不生成大文件）"""
     
     print("\n开始构建优化的搜索索引...")
     
-    # 过滤低频词汇（出现次数少于3次的词汇）
-    MIN_FREQUENCY = 3
+    # 过滤低频词汇（出现次数少于2次的词汇）
+    MIN_FREQUENCY = 2
     word_counter = Counter()
     
     # 统计词频
@@ -96,29 +120,23 @@ def build_optimized_search_index(search_index_dict: dict, output_dir: str):
     
     print(f"过滤后保留了 {len(filtered_search_index)} 个词汇（原始: {len(search_index_dict)}）")
     
-    # 保存原始搜索索引（未压缩，但已过滤）
-    search_index_path = os.path.join(output_dir, "search_index.json")
-    with open(search_index_path, 'w', encoding='utf-8') as f:
-        json.dump(filtered_search_index, f, ensure_ascii=False, separators=(',', ':'))
+    # 🚀 直接创建分块版本，不生成大文件
+    print("创建分块搜索索引...")
+    create_chunked_index(filtered_search_index, output_dir)
     
-    # 保存压缩版本
-    search_index_gz_path = os.path.join(output_dir, "search_index.json.gz")
-    with gzip.open(search_index_gz_path, 'wt', encoding='utf-8') as f:
-        json.dump(filtered_search_index, f, ensure_ascii=False, separators=(',', ':'))
+    # 🗑️ 清理可能存在的大文件（如果有的话）
+    large_files_to_remove = [
+        os.path.join(output_dir, "search_index.json"),
+        os.path.join(output_dir, "search_index.json.gz")
+    ]
     
-    # 显示文件大小信息
-    original_size = os.path.getsize(search_index_path) / (1024 * 1024)
-    compressed_size = os.path.getsize(search_index_gz_path) / (1024 * 1024)
-    
-    print(f"\n搜索索引文件大小报告:")
-    print(f"原始搜索索引 (过滤后): {original_size:.2f} MB")
-    print(f"压缩搜索索引: {compressed_size:.2f} MB")
-    print(f"压缩比: {(1 - compressed_size/original_size)*100:.1f}%")
-    
-    # 如果原始文件仍然很大，创建分块版本
-    if original_size > 20:  # 如果超过20MB
-        print(f"文件过大 ({original_size:.2f} MB)，创建分块版本...")
-        create_chunked_index(filtered_search_index, output_dir)
+    for file_path in large_files_to_remove:
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                print(f"已删除大文件: {os.path.basename(file_path)}")
+            except Exception as e:
+                print(f"删除文件 {os.path.basename(file_path)} 时出错: {e}")
     
     return filtered_search_index
 
