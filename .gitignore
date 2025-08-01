@@ -12,9 +12,6 @@ ai/.env
 test/*
 .idea/
 
-<<<<<<< HEAD
-# Large search index files (use Git LFS or compressed versions instead)
+# Large search index files (use chunked versions instead)
 docs/data/search_index.json
-
-=======
->>>>>>> 17515e0c9fe66234a50b8a9bd29daf8603219a89
+docs/data/search_index.json.gz

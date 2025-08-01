@@ -582,37 +582,33 @@ async function loadSearchIndex() {
     
     try {
         // 首先尝试加载分块清单
+        console.log('🔍 尝试加载分块清单...');
         const manifestResponse = await fetch('./data/search_index_manifest.json');
+        console.log('📋 分块清单响应状态:', manifestResponse.status);
+        
         if (manifestResponse.ok) {
-            const manifest = await manifestResponse.json();
-            console.log('📋 找到分块索引清单，使用分块加载模式');
-            return await loadChunkedSearchIndex(manifest);
+            const manifestText = await manifestResponse.text();
+            console.log('📋 清单文件内容长度:', manifestText.length);
+            console.log('📋 清单文件开头:', manifestText.substring(0, 100));
+            console.log('📋 清单文件结尾:', manifestText.substring(manifestText.length - 100));
+            
+            try {
+                const manifest = JSON.parse(manifestText);
+                console.log('📋 找到分块索引清单，使用分块加载模式');
+                return await loadChunkedSearchIndex(manifest);
+            } catch (parseError) {
+                console.error('❌ 分块清单JSON解析失败:', parseError);
+                console.error('📋 导致解析失败的内容:', manifestText.substring(0, 200));
+                throw new Error(`分块清单JSON解析失败: ${parseError.message}`);
+            }
+        } else {
+            console.log('📋 分块清单响应不成功，状态码:', manifestResponse.status);
         }
     } catch (error) {
-        console.log('📋 未找到分块清单，尝试其他方式...');
+        console.warn('📋 分块清单加载失败:', error.message);
     }
     
-    try {
-        // 尝试加载压缩版本
-        const gzResponse = await fetch('./data/search_index.json.gz');
-        if (gzResponse.ok) {
-            console.log('🗜️ 找到压缩索引，使用压缩加载模式');
-            // 注意：浏览器通常会自动解压 gzip 内容
-            return await gzResponse.json();
-        }
-    } catch (error) {
-        console.log('🗜️ 压缩版本加载失败，尝试原始版本...');
-    }
     
-    try {
-        // 最后尝试原始版本
-        console.log('📄 使用原始索引文件');
-        const response = await fetch('./data/search_index.json');
-        return await response.json();
-    } catch (error) {
-        console.error('❌ 所有搜索索引加载方式都失败了:', error);
-        throw new Error('无法加载搜索索引');
-    }
 }
 
 // 分块搜索索引加载器
@@ -2062,11 +2058,26 @@ async function init() {
 
         console.log('开始加载数据清单...');
         // 加载数据清单
+        console.log('🔍 尝试加载主清单文件...');
         const response = await fetch('./data/index.json');
-        console.log('数据清单请求响应状态:', response.status);
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-        state.manifest = await response.json();
-        console.log('数据清单加载成功:', state.manifest);
+        console.log('数据清单请求响应状态:', response.status, response.statusText);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status} - ${response.statusText}`);
+        }
+        
+        const manifestText = await response.text();
+        console.log('📋 主清单文件内容长度:', manifestText.length);
+        console.log('📋 主清单文件开头:', manifestText.substring(0, 100));
+        
+        try {
+            state.manifest = JSON.parse(manifestText);
+            console.log('数据清单加载成功:', state.manifest);
+        } catch (parseError) {
+            console.error('❌ 主清单JSON解析失败:', parseError);
+            console.error('📋 导致解析失败的内容:', manifestText.substring(0, 200));
+            throw new Error(`主清单JSON解析失败: ${parseError.message}`);
+        }
 
         // 新增：在初始化时加载全部分类
         try {
