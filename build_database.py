@@ -1,17 +1,126 @@
 import os
 import glob
 import json
+import gzip
 import re
-from collections import defaultdict
+from collections import defaultdict, Counter
 from datetime import datetime
 
-# 定义一个简单的英文停用词列表，用于构建搜索索引时忽略这些常见词
-STOP_WORDS = set([
-    "a", "an", "the", "and", "or", "in", "on", "of", "for", "to", "with",
-    "is", "are", "was", "were", "it", "its", "i", "you", "he", "she", "we", "they",
-    "as", "at", "by", "from", "that", "this", "which", "who", "what", "where",
-    "when", "why", "how", "not", "no", "but", "if", "so", "then", "just", "very"
-])
+# 扩展的停用词列表，用于构建搜索索引时忽略这些常见词
+STOP_WORDS = {
+    'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by',
+    'this', 'that', 'these', 'those', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+    'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may',
+    'might', 'must', 'can', 'shall', 'we', 'they', 'you', 'it', 'he', 'she', 'his', 'her',
+    'its', 'their', 'our', 'your', 'my', 'me', 'him', 'them', 'us', 'from', 'up', 'out',
+    'down', 'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here', 'there',
+    'when', 'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more', 'most',
+    'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than',
+    'too', 'very', 'can', 'just', 'now', 'also', 'however', 'although', 'though',
+    'paper', 'method', 'approach', 'model', 'result', 'results', 'show', 'shows',
+    'using', 'used', 'use', 'based', 'propose', 'proposed', 'algorithm', 'algorithms'
+}
+
+def create_chunked_index(search_index: dict, output_dir: str):
+    """创建分块的搜索索引（仅对英文词汇分块）"""
+    
+    # 按字母分块（仅英文词汇）
+    chunks = defaultdict(dict)
+    chinese_words = {}  # 存储中文词汇
+    
+    for word, paper_ids in search_index.items():
+        first_char = word[0].lower()
+        # 只对英文词汇进行分块
+        if first_char.isalpha() and ord(first_char) < 128:  # ASCII字母
+            chunks[first_char][word] = paper_ids
+        elif first_char.isdigit():
+            chunks['0'][word] = paper_ids  # 数字
+        else:
+            # 中文词汇统一放到一个特殊分块中
+            chinese_words[word] = paper_ids
+    
+    # 如果有中文词汇，创建专门的中文分块
+    if chinese_words:
+        chunks['zh'] = chinese_words
+    
+    # 保存分块文件
+    chunk_manifest = []
+    
+    for chunk_key, chunk_data in chunks.items():
+        chunk_filename = f"search_index_{chunk_key}.json"
+        chunk_path = os.path.join(output_dir, chunk_filename)
+        
+        with open(chunk_path, 'w', encoding='utf-8') as f:
+            json.dump(chunk_data, f, ensure_ascii=False, separators=(',', ':'))
+        
+        chunk_size = os.path.getsize(chunk_path) / (1024 * 1024)
+        chunk_manifest.append({
+            "key": chunk_key,
+            "filename": chunk_filename,
+            "wordCount": len(chunk_data),
+            "sizeMB": round(chunk_size, 2)
+        })
+        
+        print(f"创建分块 {chunk_key}: {len(chunk_data)} 词汇, {chunk_size:.2f} MB")
+    
+    # 保存分块清单
+    manifest_path = os.path.join(output_dir, "search_index_manifest.json")
+    with open(manifest_path, 'w', encoding='utf-8') as f:
+        json.dump({
+            "version": "1.0",
+            "chunked": True,
+            "chunks": chunk_manifest,
+            "totalWords": sum(chunk["wordCount"] for chunk in chunk_manifest)
+        }, f, indent=2, ensure_ascii=False)
+    
+    print(f"创建了 {len(chunks)} 个分块，总计 {sum(len(chunk) for chunk in chunks.values())} 词汇")
+
+def build_optimized_search_index(search_index_dict: dict, output_dir: str):
+    """构建优化的搜索索引（压缩和分块版本）"""
+    
+    print("\n开始构建优化的搜索索引...")
+    
+    # 过滤低频词汇（出现次数少于3次的词汇）
+    MIN_FREQUENCY = 3
+    word_counter = Counter()
+    
+    # 统计词频
+    for word, paper_ids in search_index_dict.items():
+        word_counter[word] = len(paper_ids)
+    
+    # 过滤低频词汇
+    filtered_search_index = {}
+    for word, paper_ids in search_index_dict.items():
+        if word_counter[word] >= MIN_FREQUENCY:
+            filtered_search_index[word] = paper_ids
+    
+    print(f"过滤后保留了 {len(filtered_search_index)} 个词汇（原始: {len(search_index_dict)}）")
+    
+    # 保存原始搜索索引（未压缩，但已过滤）
+    search_index_path = os.path.join(output_dir, "search_index.json")
+    with open(search_index_path, 'w', encoding='utf-8') as f:
+        json.dump(filtered_search_index, f, ensure_ascii=False, separators=(',', ':'))
+    
+    # 保存压缩版本
+    search_index_gz_path = os.path.join(output_dir, "search_index.json.gz")
+    with gzip.open(search_index_gz_path, 'wt', encoding='utf-8') as f:
+        json.dump(filtered_search_index, f, ensure_ascii=False, separators=(',', ':'))
+    
+    # 显示文件大小信息
+    original_size = os.path.getsize(search_index_path) / (1024 * 1024)
+    compressed_size = os.path.getsize(search_index_gz_path) / (1024 * 1024)
+    
+    print(f"\n搜索索引文件大小报告:")
+    print(f"原始搜索索引 (过滤后): {original_size:.2f} MB")
+    print(f"压缩搜索索引: {compressed_size:.2f} MB")
+    print(f"压缩比: {(1 - compressed_size/original_size)*100:.1f}%")
+    
+    # 如果原始文件仍然很大，创建分块版本
+    if original_size > 20:  # 如果超过20MB
+        print(f"文件过大 ({original_size:.2f} MB)，创建分块版本...")
+        create_chunked_index(filtered_search_index, output_dir)
+    
+    return filtered_search_index
 
 def build_database_from_jsonl():
     """
@@ -135,16 +244,29 @@ def build_database_from_jsonl():
         year_month = paper_data['date'][:7]
         monthly_data[year_month].append(paper_data)
 
-        # 构建搜索索引
-        text_to_index = (paper_data.get("title", "") + " " + paper_data.get("abstract", "")).lower()
+        # 构建搜索索引 - 增强版本，包含更多文本源
+        text_sources = [
+            paper_data.get("title", ""),
+            paper_data.get("abstract", ""),
+            paper_data.get("zh_title", ""),
+            paper_data.get("translation", ""),
+            " ".join(paper_data.get("keywords", [])),
+            paper_data.get("tldr", ""),
+        ]
+        
+        text_to_index = " ".join(filter(None, text_sources)).lower()
         tokens = re.findall(r'\b[a-z]{3,}\b', text_to_index)
+        
         for token in tokens:
-            if token not in STOP_WORDS:
+            if token not in STOP_WORDS and len(token) >= 3:
                 search_index[token].add(paper_id)
         
+        # 添加关键词到搜索索引
         for keyword in paper_data.get("keywords", []):
-            if keyword:
-                search_index[keyword.lower()].add(paper_id)
+            if keyword and keyword.strip():
+                clean_keyword = keyword.strip().lower()
+                if clean_keyword not in STOP_WORDS:
+                    search_index[clean_keyword].add(paper_id)
 
         # 构建分类索引
         for category in paper_data.get("categories", []):
@@ -171,12 +293,11 @@ def build_database_from_jsonl():
         json.dump(manifest, f, indent=2, ensure_ascii=False)
     print("成功写入清单文件 index.json。")
 
+    # 构建并保存优化的搜索索引
     final_search_index = {token: list(ids) for token, ids in search_index.items()}
-    search_index_file_path = os.path.join(output_dir, "search_index.json")
-    with open(search_index_file_path, 'w', encoding='utf-8') as f:
-        json.dump(final_search_index, f, ensure_ascii=False)
-    print("成功写入搜索索引文件 search_index.json。")
+    build_optimized_search_index(final_search_index, output_dir)
     
+    # 构建并保存分类索引
     final_category_index = {category: list(ids) for category, ids in category_index.items()}
     category_index_file_path = os.path.join(output_dir, "category_index.json")
     with open(category_index_file_path, 'w', encoding='utf-8') as f:

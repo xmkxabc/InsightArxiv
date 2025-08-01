@@ -160,12 +160,14 @@ function getMonthPrefix(month) {
     return month.replace('-', '').substring(2);
 }
 
-// 筛选指定月份的论文
+// 筛选指定月份的论文 - 基于日期字段而不是ID前缀
 function filterPapersByMonth(month) {
-    const monthPrefix = getMonthPrefix(month);
-    return Array.from(state.allPapers.values())
-        .filter(p => p.id && p.id.startsWith(monthPrefix))
+    console.log(`筛选月份: ${month}`);
+    const filtered = Array.from(state.allPapers.values())
+        .filter(p => p.date && p.date.startsWith(month))
         .sort((a, b) => b.date.localeCompare(a.date));
+    console.log(`找到 ${filtered.length} 篇 ${month} 的论文`);
+    return filtered;
 }
 
 // --- DOM 元素引用 ---
@@ -573,6 +575,78 @@ setInterval(() => {
 // --- 工具函数 ---
 function escapeCQ(str) { return str ? String(str).replace(/'/g, "\\'") : ''; }
 function escapeRegex(string) { return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+// 智能搜索索引加载函数
+async function loadSearchIndex() {
+    console.log('🔍 开始智能加载搜索索引...');
+    
+    try {
+        // 首先尝试加载分块清单
+        const manifestResponse = await fetch('./data/search_index_manifest.json');
+        if (manifestResponse.ok) {
+            const manifest = await manifestResponse.json();
+            console.log('📋 找到分块索引清单，使用分块加载模式');
+            return await loadChunkedSearchIndex(manifest);
+        }
+    } catch (error) {
+        console.log('📋 未找到分块清单，尝试其他方式...');
+    }
+    
+    try {
+        // 尝试加载压缩版本
+        const gzResponse = await fetch('./data/search_index.json.gz');
+        if (gzResponse.ok) {
+            console.log('🗜️ 找到压缩索引，使用压缩加载模式');
+            // 注意：浏览器通常会自动解压 gzip 内容
+            return await gzResponse.json();
+        }
+    } catch (error) {
+        console.log('🗜️ 压缩版本加载失败，尝试原始版本...');
+    }
+    
+    try {
+        // 最后尝试原始版本
+        console.log('📄 使用原始索引文件');
+        const response = await fetch('./data/search_index.json');
+        return await response.json();
+    } catch (error) {
+        console.error('❌ 所有搜索索引加载方式都失败了:', error);
+        throw new Error('无法加载搜索索引');
+    }
+}
+
+// 分块搜索索引加载器
+async function loadChunkedSearchIndex(manifest) {
+    console.log(`📦 开始加载 ${manifest.chunks.length} 个搜索索引分块...`);
+    
+    const searchIndex = {};
+    let loadedChunks = 0;
+    
+    // 并行加载所有分块（但限制并发数）
+    const chunkPromises = manifest.chunks.map(async (chunk, index) => {
+        try {
+            const response = await fetch(`./data/${chunk.filename}`);
+            const chunkData = await response.json();
+            
+            // 合并到主索引
+            Object.assign(searchIndex, chunkData);
+            
+            loadedChunks++;
+            const progress = (loadedChunks / manifest.chunks.length) * 100;
+            updateProgress(`加载搜索索引分块 ${loadedChunks}/${manifest.chunks.length}...`, 20 + progress * 0.3);
+            
+            console.log(`✅ 分块 ${chunk.key} 加载完成 (${chunk.wordCount} 词汇)`);
+        } catch (error) {
+            console.error(`❌ 分块 ${chunk.filename} 加载失败:`, error);
+            throw error;
+        }
+    });
+    
+    await Promise.all(chunkPromises);
+    
+    console.log(`🎉 所有搜索索引分块加载完成！总计 ${Object.keys(searchIndex).length} 词汇`);
+    return searchIndex;
+}
 
 // ==================== 智能缓存系统 ====================
 
@@ -5640,11 +5714,10 @@ async function loadNextMonth(triggeredByScroll = true) {
             console.log(`Loading month: ${nextMonth}`);
             await fetchMonth(nextMonth);
             
-            // 修改为基于ID的过滤逻辑，与navigateToMonth保持一致
-            const monthIdPrefix = getMonthPrefix(nextMonth);
-            console.log(`Filtering papers for month ${nextMonth} using ID prefix: ${monthIdPrefix}`);
+            // 修改为基于日期字段的过滤逻辑
+            console.log(`Filtering papers for month ${nextMonth} using date field`);
             const papersInMonth = Array.from(state.allPapers.values()).filter(p => 
-                p.id && p.id.startsWith(monthIdPrefix)
+                p.date && p.date.startsWith(nextMonth)
             );
             
             console.log(`Found ${papersInMonth.length} papers for month ${nextMonth}`);
@@ -5739,7 +5812,7 @@ async function handleSearch() {
                     }
                     if (!state.searchIndex) {
                         updateProgress('加载搜索索引...', 20);
-                        state.searchIndex = await (await fetch('./data/search_index.json')).json();
+                        state.searchIndex = await loadSearchIndex();
                     }
                 } catch (error) { 
                     searchResultsContainer.innerHTML = `<p class="text-center text-red-500">索引文件加载失败: ${error.message}。</p>`; 
