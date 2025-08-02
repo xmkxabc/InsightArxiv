@@ -6632,7 +6632,8 @@ function setupGlobalEventListeners() {
             case 'toggle-ai-details': toggleAIDetails(paperId); break;
             case 'search-tag': performTagSearch(tagValue); break;
             case 'toggle-favorite': toggleFavorite(event, paperId, target); break;
-            case 'share-paper': enhancedSharePaper(paperId); break; // 使用增强的分享
+            // 将分享改为打开分享菜单，并传入触发元素用于定位
+            case 'share-paper': sharePaper(paperId, target); break;
             case 'toggle-notes': togglePaperNotes(paperId); break;
             case 'save-note':
                 const textarea = document.querySelector(`#paper-notes-${paperId} textarea`);
@@ -8042,6 +8043,201 @@ function formatPaperCitation(paper, format = 'apa') {
             return `${authors.join(', ')} - ${title} (${year}) - arXiv:${paper.id}`;
     }
 }
+
+// 导出引用格式的辅助函数
+function formatPaperCitation(paper, format = 'apa') {
+    const authors = paper.authors ? paper.authors.split(',').map(a => a.trim()).slice(0, 3) : ['Unknown'];
+    const year = paper.date ? paper.date.split('-')[0] : new Date().getFullYear();
+    const title = paper.title || 'Untitled';
+
+    switch (format) {
+        case 'apa':
+            const authorList = authors.length > 3 ? `${authors[0]}, et al.` : authors.join(', ');
+            return `${authorList} (${year}). ${title}. arXiv preprint arXiv:${paper.id}.`;
+        case 'mla':
+            const mlaAuthor = authors[0] ? authors[0].split(' ').reverse().join(', ') : 'Unknown';
+            return `${mlaAuthor}. "${title}" arXiv preprint arXiv:${paper.id} (${year}).`;
+        case 'chicago':
+            return `${authors.join(', ')}. "${title}" arXiv preprint arXiv:${paper.id} (${year}).`;
+        default:
+            return `${authors.join(', ')} - ${title} (${year}) - arXiv:${paper.id}`;
+    }
+}
+
+// 基础分享实现
+function sharePaperCopyLink(paperId) {
+    const paper = state.allPapers.get(paperId);
+    if (!paper) return;
+    const url = `https://arxiv.org/abs/${paper.id}`;
+    navigator.clipboard.writeText(url).then(() => showToast('链接已复制到剪贴板'));
+    recordPaperInteraction(paperId, 'share_copy_link');
+}
+
+function sharePaperCopyCitation(paperId) {
+    const paper = state.allPapers.get(paperId);
+    if (!paper) return;
+    const text = formatPaperCitation(paper, 'apa');
+    navigator.clipboard.writeText(text).then(() => showToast('引用已复制到剪贴板'));
+    recordPaperInteraction(paperId, 'share_copy_citation');
+}
+
+function sharePaperViaEmail(paperId) {
+    const paper = state.allPapers.get(paperId);
+    if (!paper) return;
+    const subject = encodeURIComponent(`分享论文: ${paper.title}`);
+    const body = encodeURIComponent(`${paper.title}\n${paper.authors || 'Unknown'}\nhttps://arxiv.org/abs/${paper.id}\n\n${(paper.abstract || '').slice(0, 300)}...`);
+    window.location.href = `mailto:?subject=${subject}&body=${body}`;
+    recordPaperInteraction(paperId, 'share_email');
+}
+
+function sharePaperViaSMS(paperId) {
+    const paper = state.allPapers.get(paperId);
+    if (!paper) return;
+    const text = encodeURIComponent(`${paper.title} - https://arxiv.org/abs/${paper.id}`);
+    // 桌面端多数无效，移动端生效
+    window.location.href = `sms:?&body=${text}`;
+    recordPaperInteraction(paperId, 'share_sms');
+}
+
+// 复制 AlphaXiv 链接
+function sharePaperCopyAlphaXiv(paperId) {
+    const paper = state.allPapers.get(paperId);
+    if (!paper) return;
+    const url = `https://www.alphaxiv.org/overview/${paper.id}`;
+    navigator.clipboard.writeText(url).then(() => showToast('AlphaXiv 链接已复制到剪贴板'));
+    recordPaperInteraction(paperId, 'share_alphaxiv_copy');
+}
+
+// 系统分享（带兜底复制）
+function enhancedSharePaper(paperId, format = 'formatted') {
+    const paper = state.allPapers.get(paperId);
+    if (!paper) return;
+
+    let text = '';
+    switch (format) {
+        case 'citation':
+            text = formatPaperCitation(paper, 'apa');
+            break;
+        case 'simple':
+            text = `${paper.title} - https://arxiv.org/abs/${paper.id}`;
+            break;
+        case 'formatted':
+        default:
+            text = `📖 ${paper.title}\n👥 ${paper.authors || 'Unknown'}\n🔗 https://arxiv.org/abs/${paper.id}\n\n📄 ${(paper.abstract || '').slice(0, 200)}...`;
+    }
+
+    if (navigator.share) {
+        navigator.share({ title: paper.title, text, url: `https://arxiv.org/abs/${paper.id}` }).catch(()=>{});
+    } else {
+        navigator.clipboard.writeText(text).then(() => showToast('分享内容已复制到剪贴板'));
+    }
+    recordPaperInteraction(paperId, 'share_system');
+}
+
+// 轻量分享菜单
+function openShareMenu(paperId, anchorEl) {
+    closeShareMenu();
+
+    const menu = document.createElement('div');
+    menu.id = 'share-menu';
+    menu.className = 'share-menu';
+    menu.innerHTML = `
+        <button data-share-action="system">系统分享</button>
+        <button data-share-action="copy-link">复制链接</button>
+        <button data-share-action="copy-citation">复制引用</button>
+        <button data-share-action="alphaxiv-copy">复制 AlphaXiv 链接</button>
+        <button data-share-action="email">邮件发送</button>
+        <button data-share-action="sms">短信发送</button>
+    `;
+
+    // 基础样式（不依赖外部CSS）
+    menu.style.cssText = `
+        position: absolute;
+        z-index: 10000;
+        background: var(--bg, #fff);
+        color: var(--fg, #111);
+        border: 1px solid rgba(0,0,0,0.1);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+        border-radius: 10px;
+        padding: 6px;
+        display: flex;
+        flex-direction: column;
+        min-width: 180px;
+    `;
+    document.body.appendChild(menu);
+
+    [...menu.querySelectorAll('button')].forEach(btn => {
+        btn.style.cssText = `
+            padding: 8px 10px;
+            text-align: left;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            border-radius: 8px;
+        `;
+        btn.addEventListener('mouseover', () => btn.style.background = 'rgba(0,0,0,0.05)');
+        btn.addEventListener('mouseout', () => btn.style.background = 'transparent');
+    });
+
+    // 定位菜单
+    const rect = anchorEl.getBoundingClientRect();
+    const top = window.scrollY + rect.bottom + 8;
+    // 先临时设置以获取真实宽度
+    menu.style.top = `-9999px`;
+    menu.style.left = `-9999px`;
+    const menuWidth = menu.offsetWidth || 180;
+    const left = Math.min(window.scrollX + rect.left, window.scrollX + window.innerWidth - menuWidth - 12);
+    menu.style.top = `${top}px`;
+    menu.style.left = `${left}px`;
+
+    // 点击处理
+    menu.addEventListener('click', (e) => {
+        const action = e.target?.dataset?.shareAction;
+        if (!action) return;
+
+        switch (action) {
+            case 'system': enhancedSharePaper(paperId, 'formatted'); break;
+            case 'copy-link': sharePaperCopyLink(paperId); break;
+            case 'copy-citation': sharePaperCopyCitation(paperId); break;
+            case 'alphaxiv-copy': sharePaperCopyAlphaXiv(paperId); break;
+            case 'email': sharePaperViaEmail(paperId); break;
+            case 'sms': sharePaperViaSMS(paperId); break;
+        }
+        closeShareMenu();
+    });
+
+    // 点击外部或 Esc 关闭
+    setTimeout(() => {
+        document.addEventListener('click', onOutside, { capture: true });
+        document.addEventListener('keydown', onEsc, { capture: true });
+    }, 0);
+
+    function onOutside(ev) {
+        if (!menu.contains(ev.target) && ev.target !== anchorEl) {
+            closeShareMenu();
+        }
+    }
+    function onEsc(ev) {
+        if (ev.key === 'Escape') closeShareMenu();
+    }
+    function closeShareMenu() {
+        const el = document.getElementById('share-menu');
+        if (el) el.remove();
+        document.removeEventListener('click', onOutside, { capture: true });
+        document.removeEventListener('keydown', onEsc, { capture: true });
+    }
+}
+
+function closeShareMenu() {
+    const el = document.getElementById('share-menu');
+    if (el) el.remove();
+}
+
+
+// 将全局 sharePaper 指向“打开菜单”
+window.sharePaper = function(paperId, anchorEl) {
+    openShareMenu(paperId, anchorEl || document.body);
+};
 
 // 增强的分享功能
 function enhancedSharePaper(paperId, format = 'link') {
