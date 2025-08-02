@@ -131,6 +131,17 @@ const state = {
         backupInterval: 24 * 60 * 60 * 1000, // 24小时
         exportFormats: ['json', 'csv', 'bibtex', 'markdown'],
         syncEnabled: false
+    },
+    lazyObserver: null, // [FINAL-FIX] 用于存储懒加载观察器实例
+    // [FINAL-FIX] 新增：用于防止异步渲染冲突的会话ID
+    renderSessionId: 0,
+    // [NEW] 添加用于虚拟滚动的状态
+    virtualScroll: {
+        enabled: true,
+        allPapersToRender: [], // 当前需要渲染的所有论文
+        renderedIndex: 0,      // 已经渲染到的索引
+        batchSize: 20,         // 每次加载20篇
+        observer: null         // 用于监听哨兵元素的 observer
     }
 };
 
@@ -500,13 +511,11 @@ const performance = {
             console.log(`🧹 Cleaned up ${cleanedCount} cards to save memory`);
         }
         
-        // Also cleanup old worker tracking data
-        this.cleanupWorkerData();
-
-        // 新增：清理 state.allPapers 中不再显示的旧月份条目
+        
+         // [CRITICAL FIX] 智能卸载旧月份数据，防止状态污染
         // 仅在非搜索模式下运行，以避免意外清理搜索所需的数据
         if (!state.isSearchMode) {
-            const maxLoadedMonths = 5; // 内存中保留的最大月份数量
+            const maxLoadedMonths = 3; // 内存中仅保留最近的3个（或更少）月份的数据
 
             if (state.loadedMonths.size > maxLoadedMonths) {
                 // 获取所有已加载的月份，并按时间倒序排序（最新的在前）
@@ -518,29 +527,27 @@ const performance = {
                 if (monthsToUnload.length > 0) {
                     console.log(`🧹 Memory cleanup: Unloading ${monthsToUnload.length} old month(s): ${monthsToUnload.join(', ')}`);
                     const monthsToUnloadSet = new Set(monthsToUnload);
-                    const keysToDelete = [];
+                    let keysToDeleteCount = 0;
 
-                    // 找出属于要卸载月份的所有论文的ID
+                    // 从 state.allPapers 中删除属于这些旧月份的论文
                     for (const paperId of state.allPapers.keys()) {
                         // 从论文ID推断月份，例如 '2507.12345' -> '2025-07'
                         const paperMonth = `20${paperId.substring(0, 2)}-${paperId.substring(2, 4)}`;
                         if (monthsToUnloadSet.has(paperMonth)) {
-                            keysToDelete.push(paperId);
+                            state.allPapers.delete(paperId);
+                            keysToDeleteCount++;
                         }
                     }
-
-                    // 从 state.allPapers 中删除这些论文
-                    keysToDelete.forEach(key => {
-                        state.allPapers.delete(key);
-                    });
 
                     // 从 state.loadedMonths 中移除已卸载的月份记录
                     monthsToUnload.forEach(month => state.loadedMonths.delete(month));
 
-                    console.log(`🧹 Memory cleanup: Removed ${keysToDelete.length} papers. New total: ${state.allPapers.size}.`);
+                    console.log(`🧹 Memory cleanup: Removed ${keysToDeleteCount} papers. New total: ${state.allPapers.size}.`);
                 }
             }
         }
+        // Also cleanup old worker tracking data
+        this.cleanupWorkerData();
     },
 
     cleanupWorkerData() {
@@ -3917,7 +3924,8 @@ function getSystemPerformanceMetrics() {
     return metrics;
 }
 
-function renderPapers(papersForMonth, month) {
+// [FIXED] 让 renderPapers 接收 sessionId
+function renderPapers(papersForMonth, month, sessionId) {
     return measureRenderTime(() => {
         const monthWrapper = document.createElement('div');
         monthWrapper.id = `month-content-${month}`;
@@ -3940,80 +3948,93 @@ function renderPapers(papersForMonth, month) {
 
         if (state.navObserver) {
             state.navObserver.observe(monthWrapper);
-            console.log(`navObserver now observing month ${month}`);
-        } else {
-            console.log('navObserver is null, skipping observe');
         }
 
-        updateMonthView(month, papersForMonth);
+        // [FIXED] 将接收到的 sessionId 传递给 updateMonthView
+        updateMonthView(month, papersForMonth, sessionId);
+
     }, `renderPapers-${month}`);
 }
 
-function updateMonthView(month, allPapersForMonth) {
+/**
+ * [FINAL & UNIFIED v2] 更新单个月份视图的函数
+ * 集成了新的“无限滚动”渲染系统，成为首页所有筛选和渲染的唯一真理来源。
+ *
+ * @param {string} month - 要更新的月份, e.g., "2025-08"
+ * @param {Array} allPapersForMonth - 【纯净的】、仅属于该月份的所有论文
+ * @param {number} sessionId - 当前的渲染会话ID (确保操作的原子性)
+ */
+function updateMonthView(month, allPapersForMonth, sessionId) {
+    // 确保会话ID是最新的，防止过时的调用污染UI
+    if (sessionId !== state.renderSessionId) {
+        console.warn(`👋 渲染会话 ${sessionId} (月份视图) 已过时，中止。`);
+        return;
+    }
+
     const dateFilterWrapper = document.getElementById(`date-filter-wrapper-${month}`);
     const papersListWrapper = document.getElementById(`papers-list-wrapper-${month}`);
-    if (!dateFilterWrapper || !papersListWrapper) return;
-
-    // 🔥 修复：使用统一的 currentDateFilter 而不是 state.activeDateFilters
-    const activeFilter = currentDateFilter.startDate && currentDateFilter.endDate 
-        ? (currentDateFilter.startDate === currentDateFilter.endDate ? currentDateFilter.startDate : 'range')
-        : 'all';
-
-    console.log(`🏠 首页月份视图更新: ${month}, 活跃筛选: ${activeFilter}`);
-
-    renderDateFilter(month, allPapersForMonth, dateFilterWrapper);
-
-    let filteredPapers;
-    if (activeFilter === 'all') {
-        filteredPapers = allPapersForMonth;
-        // 🆕 清除分类筛选状态
-        state.activeCategoryFilter = null;
-        // 隐藏分类筛选器
-        const categorySection = document.getElementById(`category-filter-${month}`);
-        if (categorySection) {
-            categorySection.style.display = 'none';
-        }
-    } else if (activeFilter === 'range') {
-        // 范围筛选
-        filteredPapers = allPapersForMonth.filter(p => {
-            const paperDate = normalizeDateString(p.date);
-            const startDate = normalizeDateString(currentDateFilter.startDate);
-            const endDate = normalizeDateString(currentDateFilter.endDate);
-            return paperDate >= startDate && paperDate <= endDate;
-        });
-        // 🆕 清除分类筛选状态（范围筛选时不显示分类筛选）
-        state.activeCategoryFilter = null;
-        const categorySection = document.getElementById(`category-filter-${month}`);
-        if (categorySection) {
-            categorySection.style.display = 'none';
-        }
-    } else {
-        // 单日筛选
-        filteredPapers = allPapersForMonth.filter(p => {
-            const paperDate = normalizeDateString(p.date);
-            const filterDate = normalizeDateString(activeFilter);
-            return paperDate === filterDate;
-        });
-        
-        // 🆕 如果有分类筛选，继续应用分类筛选
-        if (state.activeCategoryFilter) {
-            filteredPapers = filteredPapers.filter(paper => {
-                return paper.categories && paper.categories.includes(state.activeCategoryFilter);
-            });
-        }
+    
+    // 如果渲染目标容器不存在，则中止以防止错误
+    if (!papersListWrapper) {
+        console.error(`Error: Cannot find papers container for month ${month}.`);
+        return;
     }
 
-    console.log(`🏠 首页筛选结果: ${allPapersForMonth.length} → ${filteredPapers.length} 篇论文`);
+    // --- 1. 确定当前激活的筛选条件 ---
+    const activeDate = currentDateFilter.startDate; // 首页只处理单日筛选
+    const activeCategory = state.activeCategoryFilter;
 
-    papersListWrapper.innerHTML = '';
-    // 确保在渲染前按日期降序排序，以解决筛选后顺序不正确的问题
-    filteredPapers.sort((a, b) => b.date.localeCompare(a.date));
+    console.log(`🔄 Updating view for ${month}: Date='${activeDate || 'all'}', Category='${activeCategory || 'all'}', Session=${sessionId}`);
+
+    // --- 2. 渲染UI组件（如日期和分类按钮） ---
+    if (dateFilterWrapper) {
+        renderDateFilter(month, allPapersForMonth, dateFilterWrapper);
+    }
+    // 只有在选中了某个具体日期时，才渲染该日期下的分类筛选器
+    if (activeDate) {
+        renderDateCategoryFilter(month, activeDate, allPapersForMonth);
+    }
+
+    // --- 3. 应用所有当前筛选，生成最终待渲染列表 ---
+    let filteredPapers = [...allPapersForMonth]; // 从纯净数据源开始
+
+    // 首先应用日期筛选
+    if (activeDate) {
+        filteredPapers = filteredPapers.filter(p => normalizeDateString(p.date) === normalizeDateString(activeDate));
+    }
+    // 然后在日期筛选结果的基础上，应用分类筛选
+    if (activeCategory) {
+        filteredPapers = filteredPapers.filter(p => p.categories && p.categories.includes(activeCategory));
+    }
+
+    console.log(`📊 Filtering for ${month}: ${allPapersForMonth.length} initial -> ${filteredPapers.length} final papers.`);
+    
+    // --- 4. 使用新的“无限滚动”逻辑进行渲染 ---
+    papersListWrapper.innerHTML = ''; // 清空旧内容
+
     if (filteredPapers.length > 0) {
-        renderInChunks(filteredPapers, papersListWrapper);
+        // a. 将完整的、筛选后的列表存入 virtualScroll 状态
+        state.virtualScroll.allPapersToRender = filteredPapers;
+        state.virtualScroll.renderedIndex = 0; // 重置渲染索引
+
+        // b. 立即渲染第一批内容
+        console.log("-> Rendering initial batch for month view.");
+        renderNextBatch();
+        
+        // c. 设置观察器，以便在用户滚动时加载后续批次
+        setupVirtualScrollObserver();
     } else {
-        papersListWrapper.innerHTML = `<p class="text-center text-gray-500 py-4">该日期没有论文。</p>`;
+        // 如果没有结果，显示提示信息并确保加载动画被隐藏
+        papersListWrapper.innerHTML = `<p class="text-center text-gray-500 py-4">没有找到符合条件的论文。</p>`;
+        loader.classList.add('hidden');
+        // 断开可能存在的旧观察器
+        if (state.virtualScroll.observer) {
+            state.virtualScroll.observer.disconnect();
+        }
     }
 }
+
+
 
 function renderDailyDistributionFilters(papers) {
     const container = document.getElementById('daily-distribution-container');
@@ -4395,348 +4416,327 @@ function renderInChunksEnhanced(papers, container, expectedDate = null) {
         }, 200); // 给渲染更多时间
     }
 }
+// [FINAL-FIX] 全局的、可重用的懒加载启动函数
+function enableLazyLoading() {
+    // 1. 如果已存在观察器，先断开并销毁，防止内存泄漏和重复观察
+    if (state.lazyObserver) {
+        state.lazyObserver.disconnect();
+    }
 
-function renderInChunks(papers, container, index = 0) {
-    console.log(`=== RENDER IN CHUNKS START ===
-        - Papers to render: ${papers.length}
-        - Starting from index: ${index}
-        - Container ID: ${container.id}
-        - Chunk size: ${3}
-    `);
-
-    const CHUNK_SIZE = 3; // 进一步减小批次大小
-    if (index >= papers.length) {
-        console.log(`=== RENDERING COMPLETED ===
-            - Total papers rendered: ${papers.length}
-            - Container now contains: ${container.children.length} elements
-            - Last 3 paper IDs: ${Array.from(container.querySelectorAll('.paper-card')).slice(-3).map(card => card.id)}
-        `);
-        
-        // 确保所有论文都已添加到state.allPapers
-        const missingPapers = papers.filter(p => !state.allPapers.has(p.id));
-        if (missingPapers.length > 0) {
-            console.warn(`Found ${missingPapers.length} papers not in state.allPapers:`, 
-                missingPapers.map(p => p.id)
-            );
-            missingPapers.forEach(p => state.allPapers.set(p.id, p));
-        }
-
-        // 渲染完成后启用懒加载 - 添加延迟和重试机制
-        console.log('Enabling lazy loading...');
-        setTimeout(() => {
-            try {
-                enableLazyLoading();
-                console.log('✅ Lazy loading enabled successfully');
-                
-                // 额外的修复：检查是否有论文在视口内但没有加载
-                setTimeout(() => {
-                    checkAndFixVisibleLazyElements();
-                }, 1000);
-            } catch (error) {
-                console.error('❌ Failed to enable lazy loading:', error);
-                // 如果懒加载失败，尝试直接加载所有可见的论文
-                setTimeout(() => forceLoadVisiblePapers(), 500);
-            }
-        }, 100); // 给DOM一点时间来稳定
+    // 2. 查找所有需要懒加载的占位符元素
+    const lazyElements = document.querySelectorAll('.lazy-load');
+    if (lazyElements.length === 0) {
+        console.log("没有需要懒加载的元素。");
         return;
     }
 
+    console.log(`👁️ 启动懒加载观察器，观察 ${lazyElements.length} 个元素...`);
+
+    // 3. 创建新的 IntersectionObserver
+    const observer = new IntersectionObserver((entries, observerInstance) => {
+        entries.forEach(entry => {
+            // 当元素进入或即将进入视口时
+            if (entry.isIntersecting) {
+                const placeholder = entry.target;
+                const paperId = placeholder.dataset.paperId;
+
+                if (paperId) {
+                    // 停止观察该元素，避免重复触发
+                    observerInstance.unobserve(placeholder);
+                    // 异步加载论文详情
+                    loadPaperDetails(paperId);
+                }
+            }
+        });
+    }, {
+        // 在元素离视口底部还有 300px 时就开始加载，提供更流畅的体验
+        rootMargin: '0px 0px 300px 0px',
+        threshold: 0.01
+    });
+
+    // 4. 让观察器开始观察所有目标元素
+    lazyElements.forEach(el => observer.observe(el));
+
+    // 5. 将新的观察器实例存入全局状态
+    state.lazyObserver = observer;
+}
+
+/**
+ * [FINAL-VERIFIED v3] 分块渲染论文卡片
+ * 修复了筛选模式下懒加载失效的问题。
+ *
+ * @param {Array} papers - 要渲染的论文对象数组。
+ * @param {HTMLElement} container - 论文卡片将被添加到的父容器元素。
+ * @param {number} [index=0] - 当前渲染的起始索引。
+ * @param {number} sessionId - 当前的渲染会话ID。
+ */
+function renderInChunks(papers, container, index = 0, sessionId) {
+    // 1. 会话ID检查 (保持不变)
+    if (sessionId !== state.renderSessionId) {
+        console.warn(`👋 渲染会话 ${sessionId} 已过时 (当前为 ${state.renderSessionId})，渲染中止。`);
+        return;
+    }
+
+    // 2. 终止条件 (保持不变)
+    if (index >= papers.length) {
+        console.log(`✅ === 渲染完成 (会话: ${sessionId}) ===`);
+        
+        // [CRITICAL FIX] 这里的逻辑也要修改，确保懒加载在需要时启动
+        const LAZY_LOAD_THRESHOLD = 15;
+        // 只要论文总数超过阈值，就应该准备懒加载观察器
+        if (papers.length > LAZY_LOAD_THRESHOLD) {
+            console.log(`-> 论文数量 (${papers.length}) 超过阈值，启用懒加载...`);
+            setTimeout(() => {
+                try {
+                    enableLazyLoading();
+                } catch (error) {
+                    console.error('❌ 启用懒加载失败:', error);
+                }
+            }, 100); // 延迟以确保所有占位符已添加到DOM
+        } else {
+            console.log(`-> 论文数量 (${papers.length}) 未超过阈值，无需懒加载。`);
+        }
+        
+        hideProgress();
+        return;
+    }
+
+    // 3. 分块处理 (保持不变)
+    const CHUNK_SIZE = 5;
     const fragment = document.createDocumentFragment();
     const endIndex = Math.min(index + CHUNK_SIZE, papers.length);
 
-    console.log(`Processing chunk: ${index} to ${endIndex}`);
     for (let i = index; i < endIndex; i++) {
-        if (papers[i] && papers[i].id) {
+        const paper = papers[i];
+
+        if (paper && paper.id) {
             try {
-                // 🔥 增强数据验证和调试
-                const paper = papers[i];
-                console.log(`📋 处理论文 ${i}: ${paper.id}, 标题: ${paper.title?.substring(0, 30)}...`);
-                
-                // 确保论文数据在allPapers中
                 if (!state.allPapers.has(paper.id)) {
-                    console.log(`💾 添加论文 ${paper.id} 到 state.allPapers`);
                     state.allPapers.set(paper.id, paper);
-                } else {
-                    console.log(`✅ 论文 ${paper.id} 已在 state.allPapers 中`);
+                }
+
+                // ============================================================
+                // [CRITICAL FIX] 修正懒加载决策逻辑
+                // ============================================================
+                const LAZY_LOAD_THRESHOLD = 15;
+                let useLazyLoad = false;
+                
+                // 新逻辑：只要当前渲染的论文索引大于等于阈值，就使用懒加载。
+                // 这与是否在筛选模式、是否在首页完全无关，逻辑变得简单而健壮。
+                if (i >= LAZY_LOAD_THRESHOLD) {
+                    useLazyLoad = true;
                 }
                 
-                // 验证数据完整性
-                const storedPaper = state.allPapers.get(paper.id);
-                if (!storedPaper.title || !storedPaper.abstract) {
-                    console.warn(`⚠️ 论文 ${paper.id} 数据可能不完整:`, {
-                        hasTitle: !!storedPaper.title,
-                        hasAbstract: !!storedPaper.abstract,
-                        hasTranslation: !!storedPaper.translation
-                    });
-                }
-                
-                // 🔥 关键修改：进一步降低懒加载阈值或完全禁用懒加载进行测试
-                // const shouldBeLazy = i >= 10; // 旧的设置
-                const shouldBeLazy = false; // 🚀 临时完全禁用懒加载，让所有论文都正常加载
-                const card = createPaperCard(paper, shouldBeLazy);
+                const card = createPaperCard(paper, useLazyLoad);
                 fragment.appendChild(card);
-                console.log(`✅ 创建卡片完成: ${paper.id} (index: ${i}, ${shouldBeLazy ? 'lazy' : 'full'})`);
+                console.log(`🎨 Card created for ${paper.id} (index: ${i}, lazy: ${useLazyLoad})`);
+
             } catch (e) {
-                console.error(`❌ 创建卡片失败: paper #${papers[i].id} at index ${i}:`, papers[i], e);
+                console.error(`❌ 创建卡片失败: paper ID ${paper.id} at index ${i}`, e);
             }
         } else {
-            console.warn(`⚠️ 跳过无效论文数据 at index ${i}:`, papers[i]);
+            console.warn(`⚠️ 跳过无效的论文数据 at index ${i}`, paper);
         }
     }
 
+    // 5. DOM操作 (保持不变)
     container.appendChild(fragment);
-    console.log(`Appended ${endIndex - index} cards to container`);
 
-    // 显示渲染进度
-    if (index % 30 === 0) { // 每30个论文显示一次进度
-        const progress = Math.round((endIndex / papers.length) * 100);
-        console.log(`Rendering progress: ${endIndex}/${papers.length} (${progress}%)`);
-
-        // 更新进度条
-        if (papers.length > 100) {
-            updateProgress(`渲染论文: ${endIndex}/${papers.length}`, 95 + (progress * 0.05));
-        }
-    }
-
-    // 使用requestIdleCallback来优化性能
+    // 6. 预约下一个分块 (保持不变)
     if (window.requestIdleCallback) {
-        requestIdleCallback(() => renderInChunks(papers, container, endIndex), { timeout: 100 });
+        requestIdleCallback(() => renderInChunks(papers, container, endIndex, sessionId), { timeout: 200 });
     } else {
-        // 降级到setTimeout，增加延迟以避免阻塞
-        setTimeout(() => renderInChunks(papers, container, endIndex), 15);
+        setTimeout(() => renderInChunks(papers, container, endIndex, sessionId), 16);
     }
 }
 
-function enableLazyLoading() {
-    // 防止重复初始化
-    if (window.lazyObserver) {
-        console.log(`⚠️ 懒加载观察器已存在，先断开旧的观察器`);
-        window.lazyObserver.disconnect();
-        window.lazyObserver = null;
-    }
-    
-    const lazyElements = document.querySelectorAll('.lazy-load');
-    console.log(`🚀 设置懒加载：发现 ${lazyElements.length} 个元素`);
-    
-    if (lazyElements.length === 0) {
-        console.warn(`⚠️ 没有找到懒加载元素`);
+/**
+ * [NEW & SIMPLIFIED] 渲染一个批次的论文卡片
+ * @param {Array} papers - 要渲染的这一批次的论文
+ * @param {HTMLElement} container - 目标容器
+ */
+function renderBatch(papers, container) {
+    if (!papers || papers.length === 0) return;
+
+    const fragment = document.createDocumentFragment();
+    const LAZY_LOAD_THRESHOLD = 5; // 超过5篇就懒加载
+
+    papers.forEach((paper, index) => {
+        if (paper && paper.id) {
+            // 在虚拟滚动模式下，除了第一批的前几篇，其余都应该懒加载
+            const useLazyLoad = state.virtualScroll.renderedIndex > 0 || index >= LAZY_LOAD_THRESHOLD;
+            const card = createPaperCard(paper, useLazyLoad);
+            fragment.appendChild(card);
+        }
+    });
+
+    container.appendChild(fragment);
+
+    // 渲染完一批后，立即启动懒加载，确保可见内容被加载
+    setTimeout(() => enableLazyLoading(), 100);
+}
+
+/**
+ * [FINAL & VERIFIED] 渲染下一批论文（用于无限滚动）
+ * 修复了渲染容器作用域问题。
+ */
+function renderNextBatch() {
+    const { allPapersToRender, renderedIndex, batchSize } = state.virtualScroll;
+
+    if (renderedIndex >= allPapersToRender.length) {
+        console.log('✅ All papers have been rendered.');
+        loader.classList.add('hidden');
+        if (state.virtualScroll.observer) {
+            state.virtualScroll.observer.disconnect();
+        }
         return;
     }
 
-    // IntersectionObserver 配置
-    const observerOptions = {
-        rootMargin: '200px 0px', // 元素进入视口前200px开始加载
-        threshold: 0.01 // 1%可见时触发
-    };
-
-    // 创建懒加载观察器
-    const lazyObserver = new IntersectionObserver(
-        async (entries, observer) => {
-            console.log(`👀 懒加载观察器触发：${entries.length} 个条目`);
-            
-            for (const entry of entries) {
-                if (entry.isIntersecting) {
-                    const element = entry.target;
-                    const paperId = element.dataset.paperId;
-                    
-                    console.log(`📄 检测到论文进入视口: ${paperId}`);
-                    
-                    // 立即停止观察该元素，防止重复触发
-                    observer.unobserve(element);
-                    console.log(`👁️ 停止观察论文: ${paperId}`);
-
-                    if (paperId) {
-                        try {
-                            console.log(`🔄 开始懒加载论文: ${paperId}`);
-                            await loadPaperDetails(paperId);
-                            console.log(`✅ 懒加载完成: ${paperId}`);
-                        } catch (error) {
-                            console.error(`💥 懒加载失败: ${paperId}`, error);
-                            
-                            // 如果加载失败，显示错误状态但不重新观察
-                            element.innerHTML = `
-                                <div class="text-center py-4 text-red-500">
-                                    <p class="text-sm">加载失败: ${error.message}</p>
-                                    <button class="mt-2 px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600" 
-                                            onclick="forceLoadPaper('${paperId}')" 
-                                            title="重试加载">
-                                        🔄 重试
-                                    </button>
-                                </div>
-                            `;
-                        }
-                    } else {
-                        console.error(`❌ 懒加载元素缺少 paperId 属性:`, element);
-                    }
-                }
-            }
-        },
-        observerOptions
-    );
-
-    // 开始观察每个懒加载元素
-    let observedCount = 0;
-    lazyElements.forEach(el => {
-        const paperId = el.dataset.paperId;
-        if (paperId) {
-            lazyObserver.observe(el);
-            observedCount++;
-            console.log(`👁️ 开始观察论文: ${paperId}`);
-        } else {
-            console.warn(`⚠️ 懒加载元素缺少 paperId 属性:`, el);
+    console.log(`🔄 Rendering next batch: from index ${renderedIndex}`);
+    
+    const batchPapers = allPapersToRender.slice(renderedIndex, renderedIndex + batchSize);
+    
+    // ===================================================================
+    // [CRITICAL FIX] 动态查找正确的渲染容器
+    // ===================================================================
+    let renderContainer = null;
+    
+    if (state.isSearchMode) {
+        // 如果是搜索模式，容器是固定的
+        renderContainer = searchResultsContainer;
+    } else {
+        // 如果是首页模式，容器ID是根据当前月份动态生成的
+        // 我们需要从 state.currentMonthIndex 获取当前正在显示的月份
+        if (state.currentMonthIndex > -1 && state.manifest.availableMonths[state.currentMonthIndex]) {
+            const currentMonth = state.manifest.availableMonths[state.currentMonthIndex];
+            const containerId = `papers-list-wrapper-${currentMonth}`;
+            renderContainer = document.getElementById(containerId);
         }
-    });
+    }
     
-    console.log(`✅ 懒加载设置完成：观察 ${observedCount} 个元素`);
+    if (renderContainer) {
+        // 调用简单的、无状态的渲染函数
+        renderBatch(batchPapers, renderContainer);
+    } else {
+        // 这是一个重要的保护，如果找不到容器，就中止并报错，而不是让应用崩溃
+        console.error("Fatal Error: Could not find a valid container to render the next batch.");
+        // 停止后续操作
+        if (state.virtualScroll.observer) {
+            state.virtualScroll.observer.disconnect();
+        }
+        loader.classList.add('hidden');
+        return; // 中止执行
+    }
+    // ===================================================================
     
-    // 保存观察器引用以便调试和清理
-    window.lazyObserver = lazyObserver;
+    // 更新已渲染的索引
+    state.virtualScroll.renderedIndex += batchSize;
     
-    // 返回观察器实例
-    return lazyObserver;
+    // 如果还有更多论文，确保加载指示器可见
+    if (state.virtualScroll.renderedIndex < allPapersToRender.length) {
+        loader.classList.remove('hidden');
+    } else {
+        // 如果这是最后一批，渲染完后隐藏加载器并断开观察
+        loader.classList.add('hidden');
+        if (state.virtualScroll.observer) {
+            state.virtualScroll.observer.disconnect();
+        }
+    }
+}
+
+/**
+ * [NEW] 设置或重置无限滚动观察器
+ */
+function setupVirtualScrollObserver() {
+    // 先断开旧的观察器
+    if (state.virtualScroll.observer) {
+        state.virtualScroll.observer.disconnect();
+    }
+
+    // 如果没有论文需要渲染，或者已经渲染完毕，则不设置
+    if (state.virtualScroll.renderedIndex >= state.virtualScroll.allPapersToRender.length) {
+        loader.classList.add('hidden');
+        return;
+    }
+
+    const options = { root: null, rootMargin: '200px', threshold: 0 };
+    state.virtualScroll.observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                renderNextBatch();
+            }
+        });
+    }, options);
+
+    loader.classList.remove('hidden');
+    state.virtualScroll.observer.observe(loader);
 }
 
 async function loadPaperDetails(paperId) {
-    const loadStartTime = Date.now();
-    console.log(`🚀 开始加载论文详情: ${paperId}`);
-
-    const placeholder = document.getElementById(`lazy-${paperId}`);
-    if (!placeholder) {
-        const existingCard = document.getElementById(`card-${paperId}`);
-        if (existingCard && !existingCard.querySelector('.lazy-load')) {
-            console.log(`📄 论文 ${paperId} 已完全加载，跳过`);
-            return;
-        }
-        console.warn(`⚠️ 找不到论文 ${paperId} 的占位符元素`);
-        return;
+    const card = document.getElementById(`card-${paperId}`);
+    if (!card || card.dataset.loading === 'true') {
+        return; // 防止重复加载
     }
-
-    const card = placeholder.closest('.paper-card');
-    if (!card) {
-        console.error(`❌ 找不到论文 ${paperId} 的卡片容器`);
-        return;
-    }
-
-    // 防止重复加载
-    if (card.dataset.loading === 'true') {
-        console.log(`⏳ 论文 ${paperId} 正在加载中，跳过重复请求`);
-        return;
-    }
-
-    // 设置加载状态
     card.dataset.loading = 'true';
-    console.log(`🔄 设置论文 ${paperId} 加载状态`);
 
     try {
-        // 1. 首先尝试从内存中获取论文数据
-        let paper = state.allPapers.get(paperId);
-        console.log(`📚 从内存获取论文数据:`, paper ? '成功' : '失败');
-
-        // 2. 如果论文数据不存在，强制重新获取月份数据
-        if (!paper) {
-            console.warn(`⚠️ 论文 ${paperId} 数据不存在，开始强制获取月份数据...`);
-            
-            // 更新加载提示
-            const loadingTextSpan = placeholder.querySelector('.loading-text span');
-            if (loadingTextSpan) {
-                loadingTextSpan.textContent = '正在重新获取数据...';
-            }
-            
-            // 解析论文所属月份
-            const paperMonth = `20${paperId.substring(0, 2)}-${paperId.substring(2, 4)}`;
-            console.log(`📅 解析论文月份: ${paperMonth}`);
-            
-            try {
-                console.log(`🔄 开始获取 ${paperMonth} 月份数据...`);
-                await fetchMonth(paperMonth, true); // 强制重新获取
-                console.log(`✅ 月份数据获取完成`);
-                
-                // 重新尝试获取论文数据
-                paper = state.allPapers.get(paperId);
-                console.log(`📚 重新获取论文数据:`, paper ? '成功' : '失败');
-                
-                if (!paper) {
-                    console.error(`❌ 即使重新获取月份数据后，仍找不到论文 ${paperId}`);
-                    throw new Error(`无法找到论文数据 (${paperId})`);
-                }
-            } catch (fetchError) {
-                console.error(`❌ 获取月份数据失败:`, fetchError);
-                throw new Error(`数据加载失败: ${fetchError.message}`);
-            }
+        // 现在我们可以确信数据是存在的
+        const paper = state.allPapers.get(paperId);
+        
+        if (!paper || !paper.abstract) {
+            // 这个错误现在只会在源数据本身有问题时触发
+            throw new Error('源数据缺失关键信息(摘要)。');
         }
 
-        // 3. 验证论文数据完整性
-        if (!paper.abstract && !paper.translation) {
-            console.warn(`⚠️ 论文 ${paperId} 数据不完整，缺少摘要信息`);
-        }
-
-        console.log(`📝 开始渲染论文 ${paperId}:
-            - 标题: ${paper.title}
-            - 日期: ${paper.date}
-            - 分类: ${paper.categories?.join(', ')}
-            - 有摘要: ${!!paper.abstract}
-            - 有翻译: ${!!paper.translation}
-        `);
-
-        // 4. 渲染论文详细内容
-        card.innerHTML = createDetailedPaperContent(paper);
-        console.log(`✅ 论文内容渲染完成`);
-
-        // 5. 初始化交互功能
+        const detailedContentHTML = createDetailedPaperContent(paper);
+        
         requestAnimationFrame(() => {
-            try {
-                updatePaperRatingDisplay(paperId);
-                updatePaperTagsDisplay(paperId);
-                console.log(`🎮 交互功能初始化完成`);
-            } catch (interactionError) {
-                console.warn(`⚠️ 交互功能初始化失败:`, interactionError);
-            }
+            card.innerHTML = detailedContentHTML;
+            updatePaperRatingDisplay(paperId);
+            updatePaperTagsDisplay(paperId);
+            card.removeAttribute('data-loading');
         });
-
-        // 6. 记录性能
-        const loadTime = Date.now() - loadStartTime;
-        console.log(`🎉 论文 ${paperId} 加载成功 (${loadTime}ms)`);
-
     } catch (error) {
-        // 错误处理
-        console.error(`💥 论文 ${paperId} 加载失败:`, error);
-        
-        // 显示友好的错误界面
-        card.innerHTML = `
-            <div class="p-6 text-center">
-                <div class="text-red-500 mb-4">
-                    <svg class="mx-auto h-8 w-8 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-                            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
-                    </svg>
-                    <p class="font-semibold">论文加载失败</p>
-                    <p class="text-sm mt-1 text-gray-600">${error.message}</p>
-                </div>
-                <div class="space-x-2">
-                    <button class="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 transition" 
-                            onclick="loadPaperDetails('${paperId}')" 
-                            title="重新加载论文">
-                        🔄 重试加载
-                    </button>
-                    <button class="px-4 py-2 text-sm bg-gray-500 text-white rounded hover:bg-gray-600 transition" 
-                            onclick="location.reload()" 
-                            title="刷新整个页面">
-                        🔄 刷新页面
-                    </button>
-                </div>
-            </div>
-        `;
-        
-        // 显示错误提示
-        if (typeof showToast === 'function') {
-            showToast(`论文 ${paperId} 加载失败: ${error.message}`, 'error');
-        }
-
-    } finally {
-        // 清理加载状态
-        card.dataset.loading = 'false';
-        console.log(`🏁 论文 ${paperId} 加载状态清理完成`);
+        console.error(`💥 [${paperId}] 论文加载失败:`, error);
+        card.innerHTML = `<div class="p-6 text-center text-red-500">${error.message}</div>`;
     }
+}
+
+// 确保 window.forceLoadPaper 函数在全局可用，以便 onclick 可以调用它。
+// 这个函数现在是用户手动触发数据修复的唯一入口。
+if (!window.forceLoadPaper) {
+    window.forceLoadPaper = async (id) => {
+        const cardToReload = document.getElementById(`card-${id}`);
+        if (cardToReload) {
+            console.log(`🔧 [${id}] 用户手动触发重试...`);
+            
+            // 显示正在重试的状态
+            cardToReload.dataset.loading = 'true';
+            cardToReload.innerHTML = `
+                <div class="p-6 text-center text-blue-600">
+                    <div class="inline-block w-6 h-6 border-2 border-blue-300 border-t-blue-600 rounded-full animate-spin"></div>
+                    <p class="mt-2 text-sm">正在尝试重新加载数据...</p>
+                </div>
+            `;
+            
+            try {
+                // 在这里执行一次性的、有针对性的数据获取
+                const paperMonth = `20${id.substring(0, 2)}-${id.substring(2, 4)}`;
+                await fetchMonth(paperMonth, true); // 强制刷新该月数据
+                
+                // 再次尝试加载详情
+                await loadPaperDetails(id);
+            } catch (e) {
+                console.error(`💥 [${id}] 手动重试失败:`, e);
+                cardToReload.innerHTML = `
+                    <div class="p-6 text-center text-red-600">
+                        <p class="font-semibold">重试失败</p>
+                        <p class="text-sm mt-1">${e.message}</p>
+                    </div>
+                `;
+            }
+        }
+    };
 }
 
 // 暴露到全局，以便HTML中的onclick可以访问
@@ -5330,16 +5330,17 @@ function createPaperCard(paper, isLazy = false) {
     if (isLazy) {
         // 懒加载模式：只渲染基本信息
         console.log(`🔄 使用懒加载模式创建 ${paper.id}`);
+        // [FINAL-FIX] 仅在需要时渲染懒加载骨架屏
         card.innerHTML = createLazyPaperContent(paper);
     } else {
         // 正常模式：渲染完整内容
         console.log(`✅ 使用完整模式创建 ${paper.id}`);
         card.innerHTML = createDetailedPaperContent(paper);
-        // 初始化用户功能显示
-        setTimeout(() => {
+        // 异步更新交互元素，防止阻塞渲染
+        requestAnimationFrame(() => {
             updatePaperRatingDisplay(paper.id);
             updatePaperTagsDisplay(paper.id);
-        }, 0);
+        });
     }
 
     return card;
@@ -5599,142 +5600,127 @@ function updateViewModeUI() {
     document.getElementById('view-compact-btn')?.classList.toggle('active', state.viewMode === 'compact');
 }
 
-// --- 核心逻辑：状态切换与导航 ---
-// 修复：重构月份导航逻辑，确保其行为正确 (isChildCall 用于处理嵌套调用)
+/**
+ * [FINAL-VERIFIED] 导航到指定月份并渲染其内容
+ */
 async function navigateToMonth(month, isChildCall = false) {
-    console.log(`=== NAVIGATE TO MONTH START ===`);
-    performanceTracker.startTracking(`Navigate to ${month}`);
-
-    console.log(`navigateToMonth called with month: ${month}, isChildCall: ${isChildCall}`);
-    console.log(`isFetching: ${state.isFetching}`);
-
-    // 只有顶层调用才检查和设置锁
     if (!isChildCall && state.isFetching) {
-        console.log('Already fetching, returning early');
+        console.warn(`Navigation to ${month} blocked: another fetch operation is in progress.`);
         return;
     }
 
+    state.renderSessionId++;
+    const currentSessionId = state.renderSessionId;
+    console.log(`🚀 启动新的渲染会话 (导航至 ${month}): ID ${currentSessionId}`);
+    
     if (!isChildCall) {
         state.isFetching = true;
-        console.log('Set isFetching to true');
-        showProgress('准备导航...');
+        showProgress(`准备导航至 ${month}...`);
     }
 
     try {
-        // 在开始加载前，显示骨架屏
-        papersContainer.innerHTML = '';
-        papersContainer.classList.add('skeleton-view');
-        const numSkeletons = Math.floor(Math.random() * 3) + 3; // 3-5 个骨架屏
-        for (let i = 0; i < numSkeletons; i++) {
-            const skeleton = document.createElement('div');
-            skeleton.className = 'skeleton-card skeleton-animate';
-            skeleton.innerHTML = `
-                <div class="skeleton h-4 w-3/4 mb-2"></div>
-                <div class="skeleton h-4 w-1/2 mb-2"></div>
-                <div class="skeleton h-4 w-full mb-2"></div>
-            `;
-            papersContainer.appendChild(skeleton);
+        if (!isChildCall) {
+            performance.cleanup();
         }
 
         if (state.isSearchMode) {
-            console.log('Resetting search mode...');
-            resetToDefaultView(false); // 仅重置UI，不重载数据以保留缓存
+            await resetToDefaultView(false); 
         }
-        console.log(`Available months: ${JSON.stringify(state.manifest.availableMonths)}`);
+        
+        // UI 准备 (骨架屏)
+        papersContainer.innerHTML = '';
+        papersContainer.classList.add('skeleton-view');
+        const numSkeletons = Math.floor(Math.random() * 2) + 3;
+        for (let i = 0; i < numSkeletons; i++) {
+            const skeleton = document.createElement('div');
+            skeleton.className = 'skeleton-card skeleton-animate';
+            skeleton.innerHTML = `<div class="skeleton h-4 w-3/4 mb-3"></div><div class="skeleton h-4 w-1/2 mb-3"></div><div class="skeleton h-4 w-full"></div>`;
+            papersContainer.appendChild(skeleton);
+        }
+
         const targetIndex = state.manifest.availableMonths.indexOf(month);
-        console.log(`Target index for ${month}: ${targetIndex}`);
-
         if (targetIndex === -1) {
-            console.error(`无效的月份: ${month}`);
-            showToast(`无效的月份: ${month}`);
-            return;
+            throw new Error(`无效的月份: ${month}`);
         }
 
-        // 对大数据文件显示警告
-        if (month === '2025-06' || month === '2025-05') {
-            showToast(`${month} 包含大量数据，加载可能需要较长时间...`);
-        }
-
-        console.log('Starting fetchWithProgress...');
-        await fetchWithProgress([month]);
-        console.log('fetchWithProgress complete');
-
-        console.log('Starting UI updates...');
-        updateProgress('渲染论文...', 95);
-        papersContainer.innerHTML = ''; // 彻底清空容器
-        console.log('Papers container cleared');
-
-        if (state.navObserver) {
-            state.navObserver.disconnect();
-            console.log('navObserver disconnected');
-        } else {
-            console.log('navObserver is null, skipping disconnect');
-        }
-        state.activeDateFilters.clear();
-        console.log('Date filters cleared');
-
-        // 渲染目标月份
-        console.log('Filtering papers for month...');
+        // 1. 先获取数据
+        await fetchMonth(month);
+        
+        // 2. [CRITICAL FIX] 数据获取完全结束后，才从全局 state 中过滤，确保数据源纯净
         const papersInMonth = filterPapersByMonth(month);
-        console.log(`Found ${papersInMonth.length} papers for month ${month}`);
+        console.log(`[navigateToMonth] Found ${papersInMonth.length} pure papers for month ${month}`);
 
-        console.log('Calling renderPapers...');
-        papersContainer.classList.remove('skeleton-view'); // 在渲染前移除骨架屏样式
-        renderPapers(papersInMonth.sort((a, b) => b.date.localeCompare(a.date)), month); // 正确传递排序后的数据
-        console.log('renderPapers completed');
+        updateProgress('渲染论文...', 95);
 
-        // 正确设置当前月份索引，为无限滚动做准备
+        // 清理UI准备渲染
+        papersContainer.classList.remove('skeleton-view');
+        papersContainer.innerHTML = '';
+        if (state.navObserver) state.navObserver.disconnect();
+
+        // 3. 将纯净的数据传递给渲染函数
+        renderPapers(papersInMonth.sort((a, b) => b.date.localeCompare(a.date)), month, currentSessionId);
+        
         state.currentMonthIndex = targetIndex;
-        console.log(`Set currentMonthIndex to ${targetIndex}`);
-
         window.scrollTo({ top: 0, behavior: 'auto' });
-        console.log('Scrolled to top');
-        console.log('Navigation completed successfully');
-
-        performanceTracker.endTracking(`Navigate to ${month}`);
+        console.log(`Navigation to ${month} completed successfully.`);
 
     } catch (error) {
-        console.error('Navigation error:', error);
-        console.error('Error stack:', error.stack);
-        showToast('导航失败，请重试');
+        console.error(`Navigation to ${month} failed:`, error);
+        const errorMessage = (error && error.message) ? error.message : "未知错误";
+        showLoadError(`导航至 ${month} 失败: ${errorMessage}`);
     } finally {
-        console.log('=== FINALLY BLOCK START ===');
-        // 只有顶层调用才解除锁和隐藏进度条
         if (!isChildCall) {
             state.isFetching = false;
-            console.log('Set isFetching to false');
             hideProgress();
-            console.log('Hidden progress indicator');
         }
-        console.log('=== NAVIGATE TO MONTH END ===');
     }
 }
 
-// 修复：确保loadNextMonth仅追加内容
+/**
+ * [FINAL-VERIFIED] (无限滚动) 加载并追加下一个月份的内容
+ */
 async function loadNextMonth(triggeredByScroll = true) {
-    if (state.isFetching || state.isSearchMode) return;
-    loader.classList.remove('hidden');
+    if (state.isFetching || state.isSearchMode) {
+        return;
+    }
+
     state.isFetching = true;
+    loader.classList.remove('hidden');
+
     try {
+        // 在追加新内容前，进行内存清理，防止内存无限增长
+        performance.cleanup();
+
         const nextIndex = state.currentMonthIndex + 1;
         if (state.manifest && state.manifest.availableMonths && nextIndex < state.manifest.availableMonths.length) {
             const nextMonth = state.manifest.availableMonths[nextIndex];
-            console.log(`Loading month: ${nextMonth}`);
+            
+            // 启动新的渲染会话，这是防止异步冲突的关键
+            state.renderSessionId++;
+            const currentSessionId = state.renderSessionId;
+            console.log(`🚀 启动新的渲染会话 (追加 ${nextMonth}): ID ${currentSessionId}`);
+
+            // 1. 先获取数据
             await fetchMonth(nextMonth);
             
-            // 修改为基于日期字段的过滤逻辑
-            console.log(`Filtering papers for month ${nextMonth} using date field`);
-            const papersInMonth = Array.from(state.allPapers.values()).filter(p => 
-                p.date && p.date.startsWith(nextMonth)
-            );
+            // 2. [CRITICAL FIX] 在数据获取完全结束后，再从全局 state 中过滤出刚刚加载的、纯净的数据
+            const papersInNextMonth = filterPapersByMonth(nextMonth);
             
-            console.log(`Found ${papersInMonth.length} papers for month ${nextMonth}`);
-            // 关键修复：renderPapers现在只接收新月份的数据，并将其追加到容器中
-            renderPapers(papersInMonth.sort((a, b) => b.date.localeCompare(a.date)), nextMonth);
+            console.log(`[loadNextMonth] Found ${papersInNextMonth.length} pure papers for month ${nextMonth}`);
+
+            // 3. 将纯净的数据传递给渲染函数
+            renderPapers(papersInNextMonth.sort((a, b) => b.date.localeCompare(a.date)), nextMonth, currentSessionId);
+            
             state.currentMonthIndex = nextIndex;
         } else {
-            if (endOfListMessage && triggeredByScroll) endOfListMessage.classList.remove('hidden');
+            console.log('End of list reached.');
+            if (endOfListMessage && triggeredByScroll) {
+                endOfListMessage.classList.remove('hidden');
+            }
         }
+    } catch (error) {
+        console.error('Failed to load next month:', error);
+        showToast(`加载下一月份失败: ${error.message}`, 'error');
     } finally {
         state.isFetching = false;
         loader.classList.add('hidden');
@@ -5747,13 +5733,38 @@ async function handleSearch() {
 
     try {
         const query = searchInput.value.trim();
+        // [CACHE] 新增：在执行搜索前检查缓存
+        const cacheKey = `search_results_${query}`;
+        const cachedResults = CacheManager.get(cacheKey);
 
+        if (cachedResults) {
+            console.log(`🚀 从缓存加载搜索结果: "${query}"`);
+            showProgress(`从缓存加载 "${query}"...`);
+            await applyViewTransition(async () => {
+                state.currentQuery = query;
+                state.isSearchMode = true;
+                state.currentSearchResults = cachedResults;
+
+                // 更新UI，显示缓存的结果
+                papersContainer.classList.add('hidden');
+                searchResultsContainer.classList.remove('hidden');
+                quickNavContainer.style.display = 'none';
+                categoryFilterContainer.classList.remove('hidden');
+                searchInfoEl.classList.remove('hidden');
+                searchResultsContainer.innerHTML = '';
+
+                renderCategoryFiltersForSearch(cachedResults);
+                renderDailyDistributionFilters(cachedResults);
+                renderFilteredResults_FIXED(); // 这个函数会启动新的渲染会话
+            });
+            // 从缓存加载成功后，直接返回，跳过后续的耗时操作
+            return; 
+        }
         // 新增：如果是一个新的搜索查询（而不是在现有结果中筛选），则重置日期筛选器
         if (query !== state.currentQuery) {
             currentDateFilter = { startDate: null, endDate: null, period: null };
             updateDateFilterDisplay('');
-            const quickFilterBtns = document.querySelectorAll('.date-quick-filter');
-            quickFilterBtns.forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.date-quick-filter').forEach(btn => btn.classList.remove('active'));
         }
 
         // 新增：检查查询是否为论文ID
@@ -5876,7 +5887,7 @@ async function handleSearch() {
 
             const monthsToLoad = [...requiredMonths].filter(m => !state.loadedMonths.has(m));
             console.log(`📦 需要新加载的月份: ${monthsToLoad.join(', ')}`);
-            await fetchWithProgress(monthsToLoad);
+            await fetchWithProgress([...requiredMonths].filter(m => !state.loadedMonths.has(m)));
 
             updateProgress('整理搜索结果...', 95);
 
@@ -5966,6 +5977,12 @@ async function handleSearch() {
             }
 
             state.currentSearchResults = results;
+            // [FINAL-FIX] 将新的搜索结果存入缓存
+            if (results.length > 0) {
+                 // 设置10分钟 (600000ms) 的缓存有效期
+                CacheManager.set(cacheKey, results, 600000);
+                console.log(`💾 已将搜索结果存入缓存: "${query}" (${results.length}条)`);
+            }
             renderCategoryFiltersForSearch(results);
             // 新增：渲染每日分布筛选器
             renderDailyDistributionFilters(results);
@@ -6152,129 +6169,61 @@ function renderFilteredResults() {
     console.log(`✅ 【最终修复版】renderFilteredResults 完成，最终显示 ${results.length} 篇论文`);
 }
 
-// 🎯 【最终修复版】彻底解决日期筛选问题
+/**
+ * [FINAL & UNIFIED v2] 渲染搜索和筛选结果的函数
+ * 集成了新的“无限滚动”渲染系统，用于处理搜索结果页。
+ */
 function renderFilteredResults_FIXED() {
-    console.log(`🎯 【最终修复版】renderFilteredResults 开始执行`);
-    console.log(`📊 输入数据:`, {
-        搜索结果总数: state.currentSearchResults.length,
-        当前查询: state.currentQuery,
-        分类筛选: state.activeCategoryFilter,
-        日期筛选状态: currentDateFilter
-    });
-    
-    // 🎯 Step 0: 彻底清理容器
-    console.log(`🧹 彻底清理搜索结果容器`);
-    if (searchResultsContainer) {
-        searchResultsContainer.innerHTML = '';
-    }
+    // 启动新的渲染会话，让所有旧的搜索渲染任务失效
+    state.renderSessionId++;
+    const currentSessionId = state.renderSessionId;
+    console.log(`🚀 启动新的渲染会话 (搜索视图), ID: ${currentSessionId}`);
 
-    // 🎯 Step 1: 从原始搜索结果开始，重新应用所有筛选
-    let results = [...state.currentSearchResults];  // 始终从原始数据开始
-    console.log(`📄 原始搜索结果: ${results.length} 篇论文`);
+    // --- 1. 应用所有当前筛选，生成最终待渲染列表 ---
+    let results = [...state.currentSearchResults]; // 从原始搜索结果开始
 
-    // 🎯 Step 2: 应用日期筛选（最重要的筛选，优先执行）
+    // 应用日期筛选
     if (currentDateFilter.startDate && currentDateFilter.endDate) {
-        const targetDate = currentDateFilter.startDate;
-        const isSingleDay = currentDateFilter.startDate === currentDateFilter.endDate;
-        
-        console.log(`📅 应用日期筛选: ${isSingleDay ? '单日' : '范围'}, 目标: ${targetDate}`);
-        
-        const beforeFilter = results.length;
-        results = results.filter(paper => {
-            if (!paper.date) {
-                console.warn(`⚠️ 论文 ${paper.id} 无日期`);
-                return false;
-            }
-            
-            // 🔥 关键修复：标准化日期格式比较
-            const paperDate = normalizeDateString(paper.date);
-            const filterDate = normalizeDateString(targetDate);
-            
-            if (isSingleDay) {
-                // 单日筛选：严格匹配
-                const match = paperDate === filterDate;
-                if (!match) {
-                    console.log(`❌ 日期不匹配: ${paper.id} [${paperDate}] ≠ [${filterDate}]`);
-                }
-                return match;
-            } else {
-                // 范围筛选
-                const startDate = normalizeDateString(currentDateFilter.startDate);
-                const endDate = normalizeDateString(currentDateFilter.endDate);
-                return paperDate >= startDate && paperDate <= endDate;
-            }
-        });
-        
-        console.log(`📅 日期筛选结果: ${beforeFilter} → ${results.length} 篇论文`);
-        
-        // 🎯 验证单日筛选结果
-        if (isSingleDay && results.length > 0) {
-            const allDates = results.map(p => normalizeDateString(p.date));
-            const uniqueDates = [...new Set(allDates)];
-            const expectedDate = normalizeDateString(targetDate);
-            
-            console.log(`📊 筛选结果日期分布: [${uniqueDates.join(', ')}]`);
-            console.log(`📊 期望日期: [${expectedDate}]`);
-            
-            if (uniqueDates.length === 1 && uniqueDates[0] === expectedDate) {
-                console.log(`✅ 日期筛选验证通过: 所有 ${results.length} 篇论文都属于 ${expectedDate}`);
-            } else {
-                console.error(`❌ 日期筛选验证失败! 期望: [${expectedDate}], 实际: [${uniqueDates.join(', ')}]`);
-                // 强制二次筛选
-                results = results.filter(p => normalizeDateString(p.date) === expectedDate);
-                console.log(`🔧 强制二次筛选后: ${results.length} 篇论文`);
-            }
-        }
+        results = applyDateFilterToResults(results);
     }
 
-    // 🎯 Step 3: 应用分类筛选
-    if (state.activeCategoryFilter !== 'all') {
-        const beforeFilter = results.length;
-        results = results.filter(paper => 
-            paper.categories && paper.categories.includes(state.activeCategoryFilter)
-        );
-        console.log(`🏷️ 分类筛选 [${state.activeCategoryFilter}]: ${beforeFilter} → ${results.length} 篇论文`);
+    // 应用分类筛选
+    if (state.activeCategoryFilter && state.activeCategoryFilter !== 'all') {
+        results = results.filter(paper => paper.categories && paper.categories.includes(state.activeCategoryFilter));
     }
 
-    console.log(`🎯 最终筛选结果: ${results.length} 篇论文`);
+    console.log(`📊 Final search results to render: ${results.length} papers.`);
 
-    // 🎯 Step 4: 更新信息显示
+    // --- 2. 更新UI信息 ---
     updateSearchInfoFixed(results.length);
+    searchResultsContainer.innerHTML = ''; // 清空旧内容
 
-    // 🎯 Step 5: 渲染结果
+    // --- 3. 使用新的“无限滚动”逻辑进行渲染 ---
     if (results.length > 0) {
-        console.log(`🎨 开始渲染 ${results.length} 篇论文`);
-        renderInChunks(results, searchResultsContainer);
-        
-        // 显示成功消息
-        if (currentDateFilter.startDate === currentDateFilter.endDate && currentDateFilter.startDate) {
-            const dateParts = currentDateFilter.startDate.split('-');
-            const month = parseInt(dateParts[1], 10);
-            const day = parseInt(dateParts[2], 10);
-            showToast(`✅ 已筛选出 ${month}月${day}日 的 ${results.length} 篇论文`, 'success');
-        }
+        // a. 将完整的、筛选后的列表存入 virtualScroll 状态
+        state.virtualScroll.allPapersToRender = results;
+        state.virtualScroll.renderedIndex = 0; // 重置渲染索引
+
+        // b. 立即渲染第一批内容
+        console.log("-> Rendering initial batch for search results.");
+        renderNextBatch();
+
+        // c. 设置观察器，以便在用户滚动时加载后续批次
+        setupVirtualScrollObserver();
     } else {
+        // 如果没有结果，显示提示信息并确保加载动画被隐藏
         searchResultsContainer.innerHTML = `<p class="text-center text-gray-500 py-8">没有找到符合条件的论文。</p>`;
-        
-        if (currentDateFilter.startDate) {
-            const dateParts = currentDateFilter.startDate.split('-');
-            const month = parseInt(dateParts[1], 10);
-            const day = parseInt(dateParts[2], 10);
-            showToast(`${month}月${day}日 没有找到相关论文`, 'info');
+        loader.classList.add('hidden');
+        // 断开可能存在的旧观察器
+        if (state.virtualScroll.observer) {
+            state.virtualScroll.observer.disconnect();
         }
     }
 
-    // 🎯 Step 6: 更新分类按钮状态
-    document.querySelectorAll('.category-filter-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.category === state.activeCategoryFilter);
-    });
-
-    // 🎯 Step 7: 确保返回按钮存在
+    // --- 4. 确保UI元素（如返回按钮）正确显示 ---
     if (!document.getElementById('back-to-home-btn')) {
         createBackToHomeButton();
     }
-    
-    console.log(`✅ 【最终修复版】renderFilteredResults 完成: ${results.length} 篇论文`);
 }
 
 // 🔥 关键函数：标准化日期字符串
@@ -6298,36 +6247,6 @@ function normalizeDateString(dateStr) {
     return dateStr;
 }
 
-// � 带分类筛选的月份视图更新
-function updateMonthViewWithCategoryFilter(month, allPapersForMonth, selectedDate, category) {
-    const papersListWrapper = document.getElementById(`papers-list-wrapper-${month}`);
-    if (!papersListWrapper) return;
-
-    console.log(`🏷️ 应用分类筛选: ${month} - ${selectedDate} - ${category}`);
-
-    // 先按日期筛选
-    let filteredPapers = allPapersForMonth.filter(p => {
-        const paperDate = normalizeDateString(p.date);
-        const targetDate = normalizeDateString(selectedDate);
-        return paperDate === targetDate;
-    });
-
-    // 再按分类筛选
-    filteredPapers = filteredPapers.filter(paper => {
-        return paper.categories && paper.categories.includes(category);
-    });
-
-    console.log(`🏷️ 分类筛选结果: ${filteredPapers.length} 篇论文`);
-
-    papersListWrapper.innerHTML = '';
-    // 确保在渲染前按日期降序排序
-    filteredPapers.sort((a, b) => b.date.localeCompare(a.date));
-    if (filteredPapers.length > 0) {
-        renderInChunks(filteredPapers, papersListWrapper);
-    } else {
-        papersListWrapper.innerHTML = `<p class="text-center text-gray-500 py-4">该日期下没有"${category}"分类的论文。</p>`;
-    }
-}
 
 // �🏠 更新所有月份的视图（首页模式）
 function updateAllMonthViews() {
@@ -6431,34 +6350,96 @@ function createBackToHomeButton() {
     searchResultsContainer.parentNode.insertBefore(backToHomeBtn, searchResultsContainer);
 }
 
-function resetToDefaultView(reload = true) {
-    state.isSearchMode = false;
-    searchInput.value = '';
-    state.currentQuery = '';
+/**
+ * [OPTIMIZED & FINAL] 重置为默认的首页视图
+ * 
+ * 功能：
+ * - 彻底退出搜索模式。
+ * - 重置所有相关状态（查询、筛选、搜索结果）。
+ * - 清理UI，移除所有搜索相关的元素。
+ * - 更新URL，移除搜索参数。
+ * - 执行严格的内存清理，防止因搜索导致的数据污染。
+ * - 可靠地重新加载并显示最新的月份作为首页。
+ *
+ * @param {boolean} [reload=true] - 如果为 true，则在重置后自动加载最新的月份。
+ *                                  如果为 false，仅重置状态和UI，不加载新内容（主要用于内部函数调用）。
+ */
+async function resetToDefaultView(reload = true) {
+    console.log(`🔄 Resetting to default view. Reload: ${reload}`);
 
+    // --- 1. 启动新的渲染会话，让所有正在进行的旧渲染任务失效 ---
+    state.renderSessionId++;
+    console.log(`🚀 启动新的渲染会话 (重置视图): ID ${state.renderSessionId}`);
+
+    // --- 2. 重置核心应用状态 ---
+    state.isSearchMode = false;
+    state.currentQuery = '';
+    state.currentSearchResults = [];
+    state.activeCategoryFilter = 'all'; // 恢复默认分类筛选
+    currentDateFilter = { startDate: null, endDate: null, period: null, source: null }; // 重置日期筛选状态
+
+    // --- 3. 重置UI输入和显示 ---
+    searchInput.value = '';
+    updateDateFilterDisplay(''); // 清除显示的日期范围
+    clearAllDateFilterActiveStates(); // 清除所有日期按钮的激活状态
+
+    // --- 4. 更新浏览器URL和历史记录 ---
     const url = new URL(window.location);
     url.searchParams.delete('q');
     url.searchParams.delete('paper');
-    history.pushState({}, '', url);
+    // 使用 replaceState 而不是 pushState，因为返回首页不应被视为一个新的历史记录条目
+    history.replaceState({}, '', url);
 
+    // --- 5. 立即清理UI布局和元素 ---
+    // 隐藏搜索结果容器并彻底清空其内容
     searchResultsContainer.classList.add('hidden');
+    searchResultsContainer.innerHTML = '';
+    
+    // 隐藏所有仅在搜索模式下显示的UI组件
+    searchInfoEl.classList.add('hidden');
+    document.getElementById('daily-distribution-container')?.classList.add('hidden');
+    
+    // 移除“返回首页”按钮（如果存在）
+    const backToHomeBtn = document.getElementById('back-to-home-btn');
+    if (backToHomeBtn) {
+        backToHomeBtn.remove();
+    }
+    
+    // 确保首页相关的容器和导航是可见的
     papersContainer.classList.remove('hidden');
     quickNavContainer.style.display = 'block';
-    searchInfoEl.classList.add('hidden');
-    categoryFilterContainer.classList.remove('hidden'); // 确保分类栏可见
-    setupCategoryFilters(); // 恢复默认的分类按钮
-    document.getElementById('daily-distribution-container')?.classList.add('hidden');
-    state.currentSearchResults = [];
-    state.activeCategoryFilter = 'all';
+    categoryFilterContainer.classList.remove('hidden');
+    
+    // 恢复UI到默认状态
+    setupCategoryFilters(); // 恢复默认的顶部分类按钮
+    updateClearButtonVisibility(); // 根据输入框内容（已清空）隐藏清除按钮
+    updateSearchStickiness(); // 重新计算搜索栏的粘性定位
 
-    updateClearButtonVisibility();
+    // --- 6. 关键步骤：执行智能内存清理 ---
+    // 这是为了清除从搜索操作中可能残留的不相关月份的数据，防止污染首页视图。
+    performance.cleanup();
+    console.log('🧹 Performed memory cleanup after resetting view.');
 
+
+    // --- 7. 如果需要，重新加载首页内容 ---
     if (reload) {
+        // 先清空当前的论文容器，为加载新内容做准备
         papersContainer.innerHTML = '';
-        state.currentMonthIndex = -1;
-        loadNextMonth(false);
+        
+        // 检查清单文件是否已加载且包含可用月份
+        if (state.manifest && state.manifest.availableMonths && state.manifest.availableMonths.length > 0) {
+            // 假设 availableMonths 数组已按降序排列，第一个元素即为最新的月份
+            const latestMonth = state.manifest.availableMonths[0];
+            console.log(`🚀 Navigating to the latest month: ${latestMonth}`);
+            
+            // 调用 navigateToMonth 来处理加载和渲染。
+            // 这是一个健壮的函数，它内部已经处理了会话ID、骨架屏和错误情况。
+            await navigateToMonth(latestMonth);
+        } else {
+            console.warn('No available months in manifest to display on default view.');
+            papersContainer.innerHTML = '<p class="text-center text-gray-500 p-8">没有可用的论文数据。</p>';
+        }
     }
-    updateSearchStickiness();
 }
 
 function performTagSearch(tag) {
@@ -6624,6 +6605,7 @@ function setupGlobalEventListeners() {
         if (!target || state.isFetching) return;
         const { action, paperId, tagValue, month, day, tag, rating, fullDate } = target.dataset;
 
+        // --- REPLACE the entire switch block inside mainContainer's click listener ---
         switch (action) {
             case 'toggle-ai-details': toggleAIDetails(paperId); break;
             case 'search-tag': performTagSearch(tagValue); break;
@@ -6637,99 +6619,65 @@ function setupGlobalEventListeners() {
                 break;
             case 'remove-tag': removePaperTag(paperId, tag); break;
             case 'rate-paper': setPaperRating(paperId, parseInt(rating)); break;
-            case 'filter-by-date':
-                // 🔧 FIXED: 更安全的获取属性值
-                const filterValue = target.dataset.fullDate || target.dataset.day;
-                console.log(`🎯 日期按钮点击详情:`, {
-                    filterValue,
-                    fullDate: target.dataset.fullDate,
-                    day: target.dataset.day,
-                    action: target.dataset.action,
-                    element: target
-                });
-                
-                // 🔥 修复：使用统一的 currentDateFilter 对象
-                if (filterValue === 'all') {
+
+            // [FINAL-VERIFIED FIX]
+            case 'filter-by-date': {
+                const selectedMonth = target.dataset.month;
+                const selectedDay = target.dataset.day;
+                const selectedFullDate = target.dataset.fullDate;
+
+                console.log(`[ACTION] Filter by Date: month=${selectedMonth}, day=${selectedDay}, fullDate=${selectedFullDate}`);
+
+                // 1. 更新全局日期筛选状态
+                if (selectedDay === 'all') {
                     currentDateFilter = { startDate: null, endDate: null, period: null };
-                    updateDateFilterDisplay('');
-                    console.log(`🔄 重置日期筛选`);
                 } else {
-                    // 确保使用正确的日期格式
-                    const normalizedDate = normalizeDateString(filterValue);
-                    currentDateFilter = { 
-                        startDate: normalizedDate, 
-                        endDate: normalizedDate, 
-                        period: 'custom' 
-                    };
-                    
-                    const dateParts = normalizedDate.split('-');
-                    const month = parseInt(dateParts[1], 10);
-                    const day = parseInt(dateParts[2], 10);
-                    updateDateFilterDisplay(`${month}/${day}`);
-                    console.log(`🎯 设置精准日期筛选:`, currentDateFilter);
+                    const normalizedDate = normalizeDateString(selectedFullDate);
+                    currentDateFilter = { startDate: normalizedDate, endDate: normalizedDate, period: 'custom' };
                 }
                 
-                // 🎯 立即应用筛选
-                if (state.isSearchMode && state.currentSearchResults.length > 0) {
-                    console.log(`🔍 搜索模式：应用筛选`);
-                    renderFilteredResults_FIXED();
-                } else {
-                    // 首页模式：更新所有月份的视图
-                    console.log(`🏠 首页模式：更新所有月份视图`);
-                    updateAllMonthViews();
-                }
-                
-                // 🎯 更新所有日期按钮的状态
-                updateAllDateButtonStates();
-                
-                // 🆕 如果选择了特定日期，显示分类筛选器
-                if (filterValue !== 'all' && target.dataset.month) {
-                    const month = target.dataset.month;
-                    const papersForMonth = filterPapersByMonth(month);
-                    renderDateCategoryFilter(month, filterValue, papersForMonth);
-                } else {
-                    // 隐藏所有分类筛选器
-                    document.querySelectorAll('.category-filter-section').forEach(section => {
-                        section.style.display = 'none';
-                    });
-                    state.activeCategoryFilter = null;
-                }
-                break;
-            case 'filter-by-category':
-                // 🆕 处理分类筛选
-                const category = target.dataset.category;
-                const categoryMonth = target.dataset.month;
-                const categoryDate = target.dataset.date;
-                
-                console.log(`🏷️ 分类筛选: ${category} (${categoryDate})`);
-                
-                state.activeCategoryFilter = category;
-                
-                // 更新该月份的视图，应用分类筛选
-                const papersForCategoryMonth = filterPapersByMonth(categoryMonth);
-                updateMonthViewWithCategoryFilter(categoryMonth, papersForCategoryMonth, categoryDate, category);
-                
-                // 更新分类按钮状态
-                document.querySelectorAll(`#category-filter-${categoryMonth} .category-filter-btn`).forEach(btn => {
-                    btn.classList.toggle('category-filter-btn-active', btn.dataset.category === category);
-                });
-                break;
-            case 'clear-category-filter':
-                // 🆕 清除分类筛选
-                const clearMonth = target.dataset.month;
-                console.log(`🧹 清除分类筛选: ${clearMonth}`);
-                
+                // 2. CRITICAL: 当日期改变时，必须重置子筛选器（分类）
                 state.activeCategoryFilter = null;
                 
-                // 重新应用日期筛选（不含分类筛选）
-                const papersForClearMonth = filterPapersByMonth(clearMonth);
-                updateMonthView(clearMonth, papersForClearMonth);
-                
-                // 更新分类按钮状态
-                document.querySelectorAll(`#category-filter-${clearMonth} .category-filter-btn`).forEach(btn => {
-                    btn.classList.remove('category-filter-btn-active');
-                });
+                // 3. [THE FIX] 只更新当前被操作的月份的视图，【绝对不要】调用 updateAllMonthViews()
+                const papersForMonth = filterPapersByMonth(selectedMonth);
+                state.renderSessionId++; // 启动新会话
+                updateMonthView(selectedMonth, papersForMonth, state.renderSessionId);
+
+                // 4. 更新所有日期按钮的UI状态
+                updateAllDateButtonStates();
                 break;
+            }
+
+            // [FINAL-VERIFIED FIX]
+            case 'filter-by-category': {
+                const selectedMonth = target.dataset.month;
+                const selectedCategory = target.dataset.category;
+                
+                console.log(`[ACTION] Filter by Category: month=${selectedMonth}, category=${selectedCategory}`);
+
+                // 1. 更新分类状态
+                state.activeCategoryFilter = selectedCategory;
+
+                // 2. 只重新渲染当前月份的视图
+                const papersForMonth = filterPapersByMonth(selectedMonth);
+                state.renderSessionId++; // 启动新会话
+                updateMonthView(selectedMonth, papersForMonth, state.renderSessionId);
+                break;
+            }
+
+            case 'clear-category-filter': {
+                const selectedMonth = target.dataset.month;
+                
+                // 清除分类筛选
+                state.activeCategoryFilter = null;
+                
+                // 重新渲染当前月份的视图
+                const papersForMonth = filterPapersByMonth(selectedMonth);
+                updateMonthView(selectedMonth, papersForMonth, state.renderSessionId); // Pass a session ID
+                break;
+            }
+            // [UNIFIED LOGIC END]
         }
     });
 
@@ -7741,51 +7689,6 @@ function showFeatureTooltip(targetSelector, message, duration = 3000, position =
     setTimeout(() => {
         featureTooltip.classList.remove('show');
     }, duration);
-}
-
-
-
-// --- 智能推荐和个性化 ---
-
-// 基于用户行为的推荐
-function generatePersonalizedRecommendations() {
-    // 分析用户搜索历史
-    const searchTerms = state.searchHistory.slice(-10);
-    const favoriteCategories = Array.from(state.favorites).map(id => {
-        const paper = state.allPapers.get(id);
-        return paper ? paper.primary_category : null;
-    }).filter(Boolean);
-
-    // 生成推荐关键词
-    const recommendations = [];
-
-    // 基于搜索历史
-    searchTerms.forEach(term => {
-        if (term.length > 3) {
-            recommendations.push({
-                keyword: term,
-                reason: '基于搜索历史',
-                score: 0.8
-            });
-        }
-    });
-
-    // 基于收藏的论文类别
-    favoriteCategories.forEach(category => {
-        const categoryKeywords = getCategoryKeywords(category);
-        categoryKeywords.forEach(keyword => {
-            recommendations.push({
-                keyword,
-                reason: '基于收藏偏好',
-                score: 0.9
-            });
-        });
-    });
-
-    return recommendations
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 8)
-        .map(r => r.keyword);
 }
 
 // 获取类别相关关键词
