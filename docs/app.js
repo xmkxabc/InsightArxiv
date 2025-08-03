@@ -5727,7 +5727,62 @@ async function handleSearch() {
 
     try {
         const query = searchInput.value.trim();
-        // [CACHE] 新增：在执行搜索前检查缓存
+
+        // --- 核心优化 V2：检测并直接显示ID搜索结果 ---
+        if (/^\d{4}\.\d{4,5}$/.test(query)) {
+            const paperId = query;
+            console.log(`🔍 ID搜索 - 直接显示模式: ${paperId}`);
+            addToSearchHistory(paperId);
+
+            // 1. 立即切换UI到单页显示模式
+            state.isSearchMode = true;
+            state.currentQuery = query;
+            papersContainer.classList.add('hidden');
+            searchResultsContainer.classList.remove('hidden');
+            searchResultsContainer.innerHTML = ''; // 彻底清空
+            quickNavContainer.style.display = 'none';
+            // 隐藏在单页模式下无意义的筛选器和信息
+            categoryFilterContainer.classList.add('hidden');
+            searchInfoEl.classList.add('hidden');
+            const dailyDistContainer = document.getElementById('daily-distribution-container');
+            if (dailyDistContainer) dailyDistContainer.classList.add('hidden');
+            
+            showProgress(`正在查找论文 ${paperId}...`);
+
+            // 2. 获取论文数据
+            const month = `20${paperId.substring(0, 2)}-${paperId.substring(2, 4)}`;
+            if (!state.loadedMonths.has(month)) {
+                await fetchMonth(month);
+            }
+
+            // 3. 独立渲染单个论文
+            const paper = state.allPapers.get(paperId);
+            if (paper) {
+                // 成功找到论文数据
+                const cardElement = createPaperCard(paper, false); // 创建完整的、非懒加载的卡片
+                
+                // 为单页模式添加一些样式，使其居中，更像详情页
+                cardElement.classList.add('shadow-xl', 'max-w-4xl', 'mx-auto');
+                
+                searchResultsContainer.appendChild(cardElement);
+                createBackToHomeButton(); // 确保用户可以返回
+            } else {
+                // 数据加载后依然找不到该论文
+                searchResultsContainer.innerHTML = `
+                    <div class="text-center p-8">
+                        <p class="text-red-500 font-semibold">错误：找不到论文 ID: ${paperId}</p>
+                        <p class="text-gray-500 text-sm mt-2">请确认ID是否正确，或该论文是否存在于我们的数据库中。</p>
+                    </div>
+                `;
+                createBackToHomeButton();
+            }
+
+            // 4. 关键：结束函数，不再执行后续的列表搜索
+            return; 
+        }
+        // --- 核心优化结束 ---
+
+        // [CACHE] 缓存逻辑保持不变
         const cacheKey = `search_results_${query}`;
         const cachedResults = CacheManager.get(cacheKey);
 
@@ -5738,57 +5793,29 @@ async function handleSearch() {
                 state.currentQuery = query;
                 state.isSearchMode = true;
                 state.currentSearchResults = cachedResults;
-
-                // 更新UI，显示缓存的结果
                 papersContainer.classList.add('hidden');
                 searchResultsContainer.classList.remove('hidden');
                 quickNavContainer.style.display = 'none';
-                categoryFilterContainer.classList.remove('hidden');
-                searchInfoEl.classList.remove('hidden');
+                categoryFilterContainer.classList.remove('hidden'); // 列表模式需要显示
+                searchInfoEl.classList.remove('hidden');             // 列表模式需要显示
                 searchResultsContainer.innerHTML = '';
-
                 renderCategoryFiltersForSearch(cachedResults);
                 renderDailyDistributionFilters(cachedResults);
-                renderFilteredResults_FIXED(); // 这个函数会启动新的渲染会话
+                renderFilteredResults_FIXED(); 
             });
-            // 从缓存加载成功后，直接返回，跳过后续的耗时操作
             return; 
         }
-        // 新增：如果是一个新的搜索查询（而不是在现有结果中筛选），则重置日期筛选器
+
+        // --- 常规关键词/分类搜索逻辑（保持不变）---
         if (query !== state.currentQuery) {
             currentDateFilter = { startDate: null, endDate: null, period: null };
             updateDateFilterDisplay('');
             document.querySelectorAll('.date-quick-filter').forEach(btn => btn.classList.remove('active'));
         }
-
-        // 新增：检查查询是否为论文ID
-        if (/^\d{4}\.\d{4,5}$/.test(query)) {
-            const paperId = query;
-            addToSearchHistory(paperId);
-
-            // 检查论文卡片是否已在当前页面渲染
-            const paperCard = document.getElementById(`card-${paperId}`);
-            if (paperCard) {
-                // 如果已渲染，则滚动到该位置并高亮显示
-                paperCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                paperCard.classList.add('highlight-shared-paper');
-                setTimeout(() => {
-                    paperCard.classList.remove('highlight-shared-paper');
-                }, 3000); // 高亮3秒
-                showToast(`已在当前页面定位到论文: ${paperId}`);
-                // 找到后直接返回，不执行后续的全文搜索
-                return;
-            }
-
-            // 如果未渲染，则使用 handleDirectLink 功能加载并跳转
-            // 这将导航到正确的月份并高亮显示论文
-            showProgress(`正在查找并跳转到论文 ${paperId}...`);
-            await handleDirectLink(paperId, true); // 传递 isChildCall = true
-            return; // 操作完成后返回
-        }
-
+        
         if (query !== state.currentQuery) {
             showProgress(`正在搜索 "${query}"...`);
+            addToSearchHistory(query);
         }
 
         await applyViewTransition(async () => {
@@ -5831,161 +5858,67 @@ async function handleSearch() {
                     searchResultsContainer.innerHTML = `<p class="text-center text-red-500">索引文件加载失败: ${error.message}。</p>`; 
                     return; 
                 }
-
-                console.log(`🔍 开始搜索查询: "${query}"`);
                 
                 let matchingIds = new Set();
-                
-                // 1. 检查是否为精确分类查询
                 if (state.categoryIndex[query]) {
-                    console.log(`📂 匹配到分类查询: ${query}`);
                     matchingIds = new Set(state.categoryIndex[query]);
                 } else {
-                    // 2. 执行关键词搜索
-                    console.log(`🔎 执行关键词搜索: "${query}"`);
                     const queryTokens = query.toLowerCase().split(/\s+/).filter(Boolean);
-                    console.log(`🔤 搜索词组: ${queryTokens.join(', ')}`);
-                    
                     queryTokens.forEach((token, index) => {
                         const foundIds = new Set();
-                        let matchCount = 0;
-                        
-                        // 在搜索索引中查找包含该词汇的条目
-                        for (const key in state.searchIndex) {
-                            if (key.includes(token)) {
-                                state.searchIndex[key].forEach(id => {
-                                    foundIds.add(id);
-                                    matchCount++;
-                                });
-                            }
-                        }
-                        
-                        console.log(`🔤 词汇 "${token}" 匹配到 ${foundIds.size} 个论文ID (${matchCount} 个索引条目)`);
-                        
-                        if (index === 0) {
-                            // 第一个词汇，直接设置结果集
-                            matchingIds = foundIds;
-                        } else {
-                            // 后续词汇，取交集 (AND 操作)
-                            const beforeIntersection = matchingIds.size;
-                            matchingIds = new Set([...matchingIds].filter(id => foundIds.has(id)));
-                            console.log(`🔗 词汇交集：从 ${beforeIntersection} 减少到 ${matchingIds.size}`);
-                        }
-                    });
-                }
-
-                console.log(`🎯 最终搜索结果: ${matchingIds.size} 个论文ID`);
-                requiredMonths = new Set([...matchingIds].map(id => `20${id.substring(0, 2)}-${id.substring(2, 4)}`));
-                console.log(`📅 需要加载的月份: ${[...requiredMonths].join(', ')}`);
-            }
-
-            const monthsToLoad = [...requiredMonths].filter(m => !state.loadedMonths.has(m));
-            console.log(`📦 需要新加载的月份: ${monthsToLoad.join(', ')}`);
-            await fetchWithProgress([...requiredMonths].filter(m => !state.loadedMonths.has(m)));
-
-            updateProgress('整理搜索结果...', 95);
-
-            if (query === 'favorites') {
-                results = Array.from(state.favorites)
-                    .map(id => state.allPapers.get(id))
-                    .filter(Boolean)
-                    .sort((a, b) => b.date.localeCompare(a.date));
-                console.log(`❤️ 收藏结果: ${results.length} 篇论文`);
-            } else {
-                // 重新构建最终匹配ID集合，确保准确性
-                let finalMatchingIds = new Set();
-                
-                if (state.categoryIndex[query]) {
-                    // 分类查询
-                    finalMatchingIds = new Set(state.categoryIndex[query]);
-                    console.log(`📂 分类查询最终结果: ${finalMatchingIds.size} 个ID`);
-                } else {
-                    // 关键词查询
-                    const queryTokens = query.toLowerCase().split(/\s+/).filter(Boolean);
-                    console.log(`🔎 重新执行关键词搜索以生成最终结果...`);
-                    
-                    queryTokens.forEach((token, index) => {
-                        const foundIds = new Set();
-                        
                         for (const key in state.searchIndex) {
                             if (key.includes(token)) {
                                 state.searchIndex[key].forEach(id => foundIds.add(id));
                             }
                         }
-                        
+                        if (index === 0) {
+                            matchingIds = foundIds;
+                        } else {
+                            matchingIds = new Set([...matchingIds].filter(id => foundIds.has(id)));
+                        }
+                    });
+                }
+                requiredMonths = new Set([...matchingIds].map(id => `20${id.substring(0, 2)}-${id.substring(2, 4)}`));
+            }
+
+            await fetchWithProgress([...requiredMonths].filter(m => !state.loadedMonths.has(m)));
+            updateProgress('整理搜索结果...', 95);
+
+            if (query === 'favorites') {
+                results = Array.from(state.favorites).map(id => state.allPapers.get(id)).filter(Boolean).sort((a, b) => b.date.localeCompare(a.date));
+            } else {
+                let finalMatchingIds = new Set();
+                if (state.categoryIndex[query]) {
+                    finalMatchingIds = new Set(state.categoryIndex[query]);
+                } else {
+                    const queryTokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+                    queryTokens.forEach((token, index) => {
+                        const foundIds = new Set();
+                        for (const key in state.searchIndex) {
+                            if (key.includes(token)) {
+                                state.searchIndex[key].forEach(id => foundIds.add(id));
+                            }
+                        }
                         if (index === 0) {
                             finalMatchingIds = foundIds;
                         } else {
                             finalMatchingIds = new Set([...finalMatchingIds].filter(id => foundIds.has(id)));
                         }
-                        
-                        console.log(`🔤 处理词汇 "${token}": 当前结果集 ${finalMatchingIds.size} 个ID`);
                     });
                 }
-                
-                // 从内存中获取论文数据并验证
-                console.log(`📚 从内存获取论文数据...`);
-                results = [];
-                let foundCount = 0;
-                let missingCount = 0;
-                
-                for (const id of finalMatchingIds) {
-                    const paper = state.allPapers.get(id);
-                    if (paper) {
-                        results.push(paper);
-                        foundCount++;
-                    } else {
-                        console.warn(`⚠️ 未找到论文 ID: ${id}`);
-                        missingCount++;
-                    }
-                }
-                
-                // 按日期排序（最新在前）
-                results.sort((a, b) => b.date.localeCompare(a.date));
-                
-                console.log(`📊 搜索结果统计:`, {
-                    匹配ID数量: finalMatchingIds.size,
-                    找到论文数量: foundCount,
-                    缺失论文数量: missingCount,
-                    最终结果数量: results.length
-                });
-                
-                // 验证结果质量
-                if (results.length > 0) {
-                    const dateRange = {
-                        最早: results[results.length - 1].date,
-                        最新: results[0].date
-                    };
-                    console.log(`📅 搜索结果日期范围:`, dateRange);
-                    
-                    // 随机抽样验证
-                    const sampleSize = Math.min(3, results.length);
-                    const samples = results.slice(0, sampleSize);
-                    console.log(`🔍 结果样例:`, samples.map(p => ({
-                        id: p.id,
-                        title: p.title.substring(0, 50) + '...',
-                        date: p.date,
-                        categories: p.categories?.slice(0, 3)
-                    })));
-                }
+                results = [...finalMatchingIds].map(id => state.allPapers.get(id)).filter(Boolean).sort((a, b) => b.date.localeCompare(a.date));
             }
 
             state.currentSearchResults = results;
-            // [FINAL-FIX] 将新的搜索结果存入缓存
             if (results.length > 0) {
-                 // 设置10分钟 (600000ms) 的缓存有效期
                 CacheManager.set(cacheKey, results, 600000);
-                console.log(`💾 已将搜索结果存入缓存: "${query}" (${results.length}条)`);
             }
             renderCategoryFiltersForSearch(results);
-            // 新增：渲染每日分布筛选器
             renderDailyDistributionFilters(results);
-
             renderFilteredResults_FIXED();
         });
     } finally {
         state.isFetching = false;
-        // handleSearch 总是管理锁，所以它总是应该隐藏进度条
         hideProgress();
     }
 }
