@@ -24,8 +24,11 @@ class ArxivSpider(scrapy.Spider):
         super().__init__(*args, **kwargs)
 
         # 1. 配置分类和起始URL
-        categories_str = os.environ.get("CATEGORIES", "cs.CR") # 默认爬取计算机视觉和人工智能
+        # categories_str = os.environ.get("CATEGORIES", "cs.CR") # 默认爬取计算机视觉和人工智能
         # categories_str = os.environ.get("CATEGORIES", "cs.CR,cs.AI,cs.LG,cs.MA,cs.RO,cs.CV,cs.HC,cs.ET,cs.SE,cs.SI,cs.NI,cs.IT,cs.AR,cs.DC,cs.CY,cs.CE,cs.FL,eess.SY,eess.SP,eess.IV,eess.AS,cs.CL,cs.DS,cs.GR,cs.IR,cs.NE,math.NA,cs.SD,cs.SC,cs.SY,cs.TO") # 默认爬取计算机视觉和人工智能
+        categories_str = os.environ.get(
+            "CATEGORIES",
+            "cs.AI,cs.AR,cs.CC,cs.CE,cs.CG,cs.CL,cs.CR,cs.CV,cs.CY,cs.DB,cs.DC,cs.DL,cs.DM,cs.DS,cs.ET,cs.FL,cs.GL,cs.GR,cs.GT,cs.HC,cs.IR,cs.IT,cs.LG,cs.LO,cs.MA,cs.MM,cs.MS,cs.NA,cs.NE,cs.NI,cs.OH,cs.OS,cs.PF,cs.PL,cs.RO,cs.SC,cs.SD,cs.SE,cs.SI,cs.SY,eess.AS,eess.IV,eess.SP,eess.SY,math.NA,stat.AP,q-fin.MF") # 默认爬取计算机视觉和人工智能
         self.categories_list = [cat.strip() for cat in categories_str.split(",")]
         self.start_urls = [f"https://arxiv.org/list/{cat}/new" for cat in self.categories_list]
         self.seen_ids = set() # 新增：用于跟踪已处理的论文ID
