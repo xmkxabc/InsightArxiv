@@ -5,6 +5,14 @@ import re
 from collections import defaultdict, Counter
 from datetime import datetime
 
+# 尝试导入jieba用于中文分词
+try:
+    import jieba
+    print("✅ Jieba loaded for Chinese tokenization.")
+except ImportError:
+    jieba = None
+    print("⚠️ Warning: 'jieba' not installed. Chinese search will be limited to exact keyword matches.")
+
 # 扩展的停用词列表，用于构建搜索索引时忽略这些常见词
 STOP_WORDS = {
     'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by',
@@ -263,23 +271,33 @@ def build_database_from_jsonl():
         monthly_data[year_month].append(paper_data)
 
         # 构建搜索索引 - 增强版本，包含更多文本源
-        text_sources = [
+        # 1. 索引英文文本
+        english_text_sources = [
             paper_data.get("title", ""),
             paper_data.get("abstract", ""),
-            paper_data.get("zh_title", ""),
-            paper_data.get("translation", ""),
-            " ".join(paper_data.get("keywords", [])),
             paper_data.get("tldr", ""),
         ]
-        
-        text_to_index = " ".join(filter(None, text_sources)).lower()
-        tokens = re.findall(r'\b[a-z]{3,}\b', text_to_index)
-        
+        english_text_to_index = " ".join(filter(None, english_text_sources)).lower()
+        tokens = re.findall(r'\b[a-z]{3,}\b', english_text_to_index)
         for token in tokens:
             if token not in STOP_WORDS and len(token) >= 3:
                 search_index[token].add(paper_id)
-        
-        # 添加关键词到搜索索引
+
+        # 2. 如果jieba可用，索引中文文本
+        if jieba:
+            chinese_text_sources = [
+                paper_data.get("zh_title", ""),
+                paper_data.get("translation", ""),
+                paper_data.get("ai_comments", ""),
+            ]
+            chinese_text_to_index = "".join(filter(None, chinese_text_sources))
+            chinese_tokens = jieba.cut_for_search(chinese_text_to_index) # 使用搜索引擎模式
+            for token in chinese_tokens:
+                token = token.strip().lower()
+                if token and token not in STOP_WORDS and len(token) > 1:
+                    search_index[token].add(paper_id)
+
+        # 3. 添加完整的关键词到搜索索引 (处理中英文混合的关键词)
         for keyword in paper_data.get("keywords", []):
             if keyword and keyword.strip():
                 clean_keyword = keyword.strip().lower()
