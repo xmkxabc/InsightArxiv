@@ -7874,7 +7874,8 @@ function setupAutoBackup() {
             const now = Date.now();
 
             if (!lastBackup || (now - new Date(lastBackup).getTime()) >= backupInterval) {
-                exportUserData('all');
+                // 自动备份功能会触发文件下载，如果不需要可以注释掉下面这行
+                // exportUserData('all');
                 state.dataManagement.lastBackup = new Date().toISOString();
                 console.log('自动备份已完成');
             }

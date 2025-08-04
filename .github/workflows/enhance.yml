@@ -41,7 +41,7 @@ jobs:
 
       - name: Set Target Date
         id: date
-        run: echo "TARGET_DATE=$(date -d "yesterday" +"%Y-%m-%d")" >> $GITHUB_OUTPUT
+        run: echo "TARGET_DATE=$(date -d "today" +"%Y-%m-%d")" >> $GITHUB_OUTPUT
 
       
 
