@@ -29,9 +29,9 @@ class ChatGoogleNoRetry(ChatGoogleGenerativeAI):
 FREE = {
     "gemini-2.5-flash":   (10, 250),
     "gemini-2.5-pro":     (5, 100),
-    "gemini-2.5-flash-l": (15, 1000),
+    "gemini-2.5-flash-lite": (15, 1000),
     "gemini-2.0-flash":   (15, 200),
-    "gemini-2.0-flash-l": (30, 200),
+    "gemini-2.0-flash-lite": (30, 200),
     "gemini-1.5-flash":   (15, 50),
     "gemini-1.5-pro":     (2, 50),
 }
