@@ -4,6 +4,29 @@ import json
 import re
 from collections import defaultdict, Counter
 from datetime import datetime
+import multiprocessing
+from functools import partial
+import shutil
+
+# --- 新增：引入NLTK进行词形还原，提升搜索质量 ---
+# 首次运行时，需要安装NLTK: pip install nltk
+try:
+    import nltk
+    from nltk.stem import WordNetLemmatizer
+    # 检查并下载NLTK所需数据
+    try:
+        nltk.data.find('corpora/wordnet')
+        nltk.data.find('corpora/omw-1.4')
+    except LookupError:
+        print("首次运行，正在下载NLTK数据包 (wordnet, omw-1.4)...")
+        nltk.download('wordnet')
+        nltk.download('omw-1.4')
+    lemmatizer = WordNetLemmatizer()
+    print("✅ NLTK WordNetLemmatizer loaded.")
+except ImportError:
+    nltk = None
+    lemmatizer = None
+    print("⚠️ Warning: 'nltk' not installed. English search will not use lemmatization.")
 
 # 尝试导入jieba用于中文分词
 try:
@@ -15,140 +38,117 @@ except ImportError:
 
 # 扩展的停用词列表，用于构建搜索索引时忽略这些常见词
 STOP_WORDS = {
+    # English
     'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by',
     'this', 'that', 'these', 'those', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
     'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may',
     'might', 'must', 'can', 'shall', 'we', 'they', 'you', 'it', 'he', 'she', 'his', 'her',
     'its', 'their', 'our', 'your', 'my', 'me', 'him', 'them', 'us', 'from', 'up', 'out',
     'down', 'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here', 'there',
-    'when', 'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more', 'most',
-    'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than',
-    'too', 'very', 'can', 'just', 'now', 'also', 'however', 'although', 'though',
-    'paper', 'method', 'approach', 'model', 'result', 'results', 'show', 'shows',
-    'using', 'used', 'use', 'based', 'propose', 'proposed', 'algorithm', 'algorithms'
+    'when', 'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more', 'most', 'other',
+    'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very',
+    'can', 'just', 'now', 'also', 'however', 'although', 'though',
+    # Domain-specific English
+    'paper', 'method', 'approach', 'model', 'result', 'results', 'show', 'shows', 'using',
+    'used', 'use', 'based', 'propose', 'proposed', 'algorithm', 'algorithms', 'study',
+    'studies', 'work', 'new', 'novel', 'task', 'tasks', 'data', 'dataset',
+    # Chinese
+    '的', '了', '在', '是', '我', '有', '和', '你', '他', '她', '为', '之', '以', '而', '于', '等', '也',
+    '还', '就', '都', '人', '因', '此', '被', '从', '到', '着', '个', '们', '其中', '如果', '那么',
+    '我们', '他们', '她们', '它', '它们', '因为', '所以', '但是', '并且', '而且', '研究', '论文',
+    '方法', '模型', '结果', '基于', '通过', '使用', '显示', '提出', '一个', '一种', '本文'
 }
 
-def create_chunked_index(search_index: dict, output_dir: str):
-    """创建分块的搜索索引（优化版本）"""
-    
-    # 按字母分块（仅英文词汇）
-    chunks = defaultdict(dict)
-    chinese_words = {}  # 存储中文词汇
-    stats = {"total_words": 0, "chunks_created": 0, "total_size_mb": 0}
-    
-    print("开始分词和分块...")
-    for word, paper_ids in search_index.items():
-        stats["total_words"] += 1
-        first_char = word[0].lower()
+is_english_word = re.compile(r'^[a-z]+$')
+
+def tokenize_text(text: str) -> set:
+    """
+    一个统一的、更智能的分词器，用于处理中英文混合文本 (V4 - 引入N-grams)。
+    - 转换为小写。
+    - 使用 jieba (如果可用) 进行中英文混合分词。
+    - 使用 NLTK (如果可用) 对英文单词进行词形还原 (Lemmatization)，例如 'models' -> 'model'。
+    - 生成 unigrams, bigrams, 和 trigrams (一元、二元、三元词组) 以支持短语搜索。
+    - 移除停用词、过短的词和纯数字。
+    """
+    if not text or not isinstance(text, str):
+        return set()
+
+    # 1. 预处理
+    text = text.lower()
+    text = re.sub(r'[-_]', ' ', text)
+
+    # 2. 分词
+    if jieba:
+        # 使用搜索模式分词，能更好地处理待搜索的文本
+        initial_tokens = jieba.cut_for_search(text)
+    else:
+        # 简单的英文/数字分词器
+        initial_tokens = re.findall(r'[a-z]+', text) # 只匹配字母，忽略数字
+
+    # 3. 清理、词形还原和过滤，生成一个有序的词元列表
+    cleaned_tokens = []
+    for token in initial_tokens:
+        clean_token = token.strip()
         
-        # 只对英文词汇进行分块
-        if first_char.isalpha() and ord(first_char) < 128:  # ASCII字母
-            chunks[first_char][word] = paper_ids
-        elif first_char.isdigit():
-            chunks['0'][word] = paper_ids  # 数字
-        else:
-            # 中文词汇统一放到一个特殊分块中
-            chinese_words[word] = paper_ids
-    
-    # 如果有中文词汇，创建专门的中文分块
-    if chinese_words:
-        chunks['zh'] = chinese_words
-        print(f"中文词汇分块: {len(chinese_words)} 个词汇")
-    
-    # 保存分块文件（优化写入）
-    chunk_manifest = []
-    
-    print("写入分块文件...")
-    for chunk_key, chunk_data in chunks.items():
-        if not chunk_data:  # 跳过空分块
-            continue
+        # 对纯英文字母的词进行词形还原 (如果NLTK可用)
+        if lemmatizer and is_english_word.match(clean_token):
+            clean_token = lemmatizer.lemmatize(clean_token)
+
+        # 过滤掉停用词和过短的词
+        if clean_token and clean_token not in STOP_WORDS and not clean_token.isdigit() and len(clean_token) >= 2:
+            cleaned_tokens.append(clean_token)
+
+    # 4. 生成 N-grams (一元、二元、三元词组)
+    all_grams = set(cleaned_tokens)  # 首先添加所有单个词 (unigrams)
+    # 生成二元词组 (bigrams)
+    all_grams.update(" ".join(cleaned_tokens[i:i+2]) for i in range(len(cleaned_tokens) - 1))
+    # 生成三元词组 (trigrams)
+    all_grams.update(" ".join(cleaned_tokens[i:i+3]) for i in range(len(cleaned_tokens) - 2))
             
-        chunk_filename = f"search_index_{chunk_key}.json"
-        chunk_path = os.path.join(output_dir, chunk_filename)
-        
-        # 使用更紧凑的JSON格式
-        with open(chunk_path, 'w', encoding='utf-8') as f:
-            json.dump(chunk_data, f, ensure_ascii=False, separators=(',', ':'))
-        
-        chunk_size = os.path.getsize(chunk_path) / (1024 * 1024)
-        stats["total_size_mb"] += chunk_size
-        stats["chunks_created"] += 1
-        
-        chunk_manifest.append({
-            "key": chunk_key,
-            "filename": chunk_filename,
-            "wordCount": len(chunk_data),
-            "sizeMB": round(chunk_size, 2)
-        })
-        
-        print(f"✅ 分块 '{chunk_key}': {len(chunk_data)} 词汇, {chunk_size:.2f} MB")
-    
-    # 保存分块清单
-    manifest_path = os.path.join(output_dir, "search_index_manifest.json")
-    manifest_data = {
-        "version": "2.0",
-        "chunked": True,
-        "description": "分块搜索索引，优化加载性能",
-        "chunks": sorted(chunk_manifest, key=lambda x: x["key"]),
-        "totalWords": stats["total_words"],
-        "totalChunks": stats["chunks_created"],
-        "totalSizeMB": round(stats["total_size_mb"], 2),
-        "generatedAt": datetime.now().isoformat()
-    }
-    
-    with open(manifest_path, 'w', encoding='utf-8') as f:
-        json.dump(manifest_data, f, indent=2, ensure_ascii=False)
-    
-    print(f"\n🎉 分块索引创建完成:")
-    print(f"   - 总词汇数: {stats['total_words']:,}")
-    print(f"   - 分块数量: {stats['chunks_created']}")
-    print(f"   - 总大小: {stats['total_size_mb']:.2f} MB")
-    print(f"   - 平均分块大小: {stats['total_size_mb']/stats['chunks_created']:.2f} MB")
-    
-    return manifest_data
+    return all_grams
 
-def build_optimized_search_index(search_index_dict: dict, output_dir: str):
-    """构建优化的搜索索引（仅分块版本，不生成大文件）"""
-    
-    print("\n开始构建优化的搜索索引...")
-    
-    # 过滤低频词汇（出现次数少于2次的词汇）
-    MIN_FREQUENCY = 2
-    word_counter = Counter()
-    
-    # 统计词频
-    for word, paper_ids in search_index_dict.items():
-        word_counter[word] = len(paper_ids)
-    
-    # 过滤低频词汇
-    filtered_search_index = {}
-    for word, paper_ids in search_index_dict.items():
-        if word_counter[word] >= MIN_FREQUENCY:
-            filtered_search_index[word] = paper_ids
-    
-    print(f"过滤后保留了 {len(filtered_search_index)} 个词汇（原始: {len(search_index_dict)}）")
-    
-    # 🚀 直接创建分块版本，不生成大文件
-    print("创建分块搜索索引...")
-    create_chunked_index(filtered_search_index, output_dir)
-    
-    # 🗑️ 清理可能存在的大文件（如果有的话）
-    large_files_to_remove = [
-        os.path.join(output_dir, "search_index.json"),
-        os.path.join(output_dir, "search_index.json.gz")
-    ]
-    
-    for file_path in large_files_to_remove:
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-                print(f"已删除大文件: {os.path.basename(file_path)}")
-            except Exception as e:
-                print(f"删除文件 {os.path.basename(file_path)} 时出错: {e}")
-    
-    return filtered_search_index
+def process_paper_for_indexing(paper_data: dict) -> tuple:
+    """
+    处理单个论文，提取用于搜索和分类索引的信息。
+    这是为多进程设计的独立工作单元。
+    """
+    paper_id = paper_data.get("id")
+    if not paper_id:
+        return None, None, None, None
 
-def build_database_from_jsonl():
+    # 1. 提取并处理主要文本的搜索词元 (title, abstract, etc.)
+    main_text_to_index = " ".join(filter(None, [
+        paper_data.get("title", ""),
+        paper_data.get("abstract", ""),
+        paper_data.get("zh_title", ""),
+        paper_data.get("translation", ""),
+        paper_data.get("tldr", ""),
+        paper_data.get("ai_comments", ""),
+        paper_data.get("comment", ""),
+    ]))
+    search_tokens = tokenize_text(main_text_to_index)
+
+    # 2. 单独处理并添加高质量的关键词短语
+    keyword_phrases = set()
+    for keyword in paper_data.get("keywords", []):
+        if keyword and isinstance(keyword, str):
+            # 清理关键词：转小写，移除多余空格
+            clean_keyword = " ".join(keyword.lower().strip().split())
+            if clean_keyword and len(clean_keyword) > 2 and clean_keyword not in STOP_WORDS:
+                keyword_phrases.add(clean_keyword)
+    
+    # 3. 合并两种词元
+    all_search_tokens = search_tokens.union(keyword_phrases)
+
+    # 提取分类
+    categories = paper_data.get("categories", [])
+
+    # 按月份聚合
+    year_month = paper_data.get('date', '')[:7]
+
+    return paper_id, all_search_tokens, categories, year_month
+
+def build_database_from_jsonl_fixed():
     """
     构建数据库的主函数。
     它从 'data' 目录下的所有 *_AI_enhanced_Chinese.jsonl 文件中读取数据，
@@ -265,61 +265,182 @@ def build_database_from_jsonl():
     if skipped_paper_count > 0:
         print(f"因格式错误或版本陈旧，总共跳过了 {skipped_paper_count} 条记录。")
 
-    # --- 第二阶段：从 all_papers_map 构建最终的数据结构和索引 ---
-    monthly_data = defaultdict(list)
-    search_index = defaultdict(set)
+    # --- 准备临时目录 ---
+    temp_index_dir = os.path.join(output_dir, "temp_index")
+    if os.path.exists(temp_index_dir):
+        shutil.rmtree(temp_index_dir)
+    os.makedirs(temp_index_dir)
+    print(f"已创建临时索引目录: {temp_index_dir}")
+
+    # 清理旧的索引文件，避免新旧文件混合
+    print("正在清理旧的索引文件...")
+    for f in glob.glob(os.path.join(output_dir, "search_index_*.*")):
+        os.remove(f)
+    if os.path.exists(os.path.join(output_dir, "search_index_manifest.json")):
+        os.remove(os.path.join(output_dir, "search_index_manifest.json"))
+
+    # --- 第二阶段：使用多进程并行构建索引 ---
+    print(f"\n🚀 开始使用多进程并行构建索引 (使用 {multiprocessing.cpu_count()} 个核心)...")
+    
+    papers_list = list(all_papers_map.values())
+    
+    # 清理内部字段
+    for paper in papers_list:
+        if '_version' in paper:
+            del paper['_version']
+
+    temp_file_handles = {}
     category_index = defaultdict(set)
-
-    for paper_id, paper_data in all_papers_map.items():
-        # 清理掉内部使用的字段
-        del paper_data['_version']
+    monthly_data = defaultdict(list)
+    with multiprocessing.Pool() as pool:
+        # 使用 imap_unordered 来获取结果，这样可以更快地处理并显示进度
+        # 它返回一个迭代器，而不是一次性返回所有结果，更节省内存
+        results_iterator = pool.imap_unordered(process_paper_for_indexing, papers_list)
         
-        # 按月份聚合
-        year_month = paper_data['date'][:7]
-        monthly_data[year_month].append(paper_data)
+        processed_count = 0
+        for i, result in enumerate(results_iterator):
+            if result is None or result[0] is None:
+                continue
+            
+            paper_id, search_tokens, categories, year_month = result
+            
+            # --- 核心优化：将搜索词元写入临时文件，避免内存溢出 ---
+            # 核心改动：不将搜索词元聚合到内存，而是直接写入到按分块键组织的临时文件
+            for token in search_tokens:
+                first_char = token[0].lower()
+                # 确定分块键 (a-z, 0 for digits, zh for others)
+                chunk_key = '0' if first_char.isdigit() else first_char if first_char.isalpha() and ord(first_char) < 128 else 'zh'
+                
+                if chunk_key not in temp_file_handles:
+                    filepath = os.path.join(temp_index_dir, f"{chunk_key}.part")
+                    temp_file_handles[chunk_key] = open(filepath, 'a', encoding='utf-8')
+                
+                # 以制表符分隔的格式写入，便于后续处理
+                temp_file_handles[chunk_key].write(f"{token}\t{paper_id}\n")
+            
+            # 分类索引和月度数据较小，可以继续在内存中聚合
+            for category in categories:
+                category_index[category].add(paper_id)
 
-        # 构建搜索索引 - 增强版本，包含更多文本源
-        # 1. 索引英文文本
-        english_text_sources = [
-            paper_data.get("title", ""),
-            paper_data.get("abstract", ""),
-            paper_data.get("tldr", ""),
-            paper_data.get("comment", ""),
-        ]
-        english_text_to_index = " ".join(filter(None, english_text_sources)).lower()
-        tokens = re.findall(r'\b[a-z]{3,}\b', english_text_to_index)
-        for token in tokens:
-            if token not in STOP_WORDS and len(token) >= 3:
-                search_index[token].add(paper_id)
+            # 按月份聚合数据 (需要原始paper_data)
+            if year_month:
+                 monthly_data[year_month].append(all_papers_map[paper_id])
 
-        # 2. 如果jieba可用，索引中文文本
-        if jieba:
-            chinese_text_sources = [
-                paper_data.get("zh_title", ""),
-                paper_data.get("translation", ""),
-                paper_data.get("ai_comments", ""),
-                paper_data.get("tldr", ""),
-            ]
-            chinese_text_to_index = "".join(filter(None, chinese_text_sources))
-            chinese_tokens = jieba.cut_for_search(chinese_text_to_index) # 使用搜索引擎模式
-            for token in chinese_tokens:
-                token = token.strip().lower()
-                if token and token not in STOP_WORDS and len(token) > 1:
-                    search_index[token].add(paper_id)
+            processed_count += 1
+            if (i + 1) % 1000 == 0:
+                print(f"  ...已处理 {i+1}/{total_paper_count} 篇论文")
 
-        # 3. 添加完整的关键词到搜索索引 (处理中英文混合的关键词)
-        for keyword in paper_data.get("keywords", []):
-            if keyword and keyword.strip():
-                clean_keyword = keyword.strip().lower()
-                if clean_keyword not in STOP_WORDS:
-                    search_index[clean_keyword].add(paper_id)
+    # 关闭所有临时文件句柄
+    for handle in temp_file_handles.values():
+        handle.close()
 
-        # 构建分类索引
-        for category in paper_data.get("categories", []):
-            category_index[category].add(paper_id)
+    print(f"✅ 多进程处理完成，共处理 {processed_count} 篇论文。")
+    print("中间索引文件已写入临时目录。")
 
-    # --- 开始写入文件 ---
-    print("\n开始写入数据库文件...")
+    # 释放内存
+    del all_papers_map
+    del papers_list
+
+    # --- 第三阶段：从临时文件构建最终的分块搜索索引 ---
+    print("\n⚙️ 开始从临时文件构建最终的分块搜索索引...")
+    # 为不同长度的词条设置不同的频率阈值
+    # 英文词条阈值
+    MIN_FREQ_UNIGRAM = 2
+    MIN_FREQ_BIGRAM = 3
+    MIN_FREQ_TRIGRAM = 3
+    # 为中文词条设置更高的阈值，以大幅减小索引体积
+    MIN_FREQ_UNIGRAM_ZH = 7  # 再次提高
+    MIN_FREQ_BIGRAM_ZH = 10  # 再次提高
+    MIN_FREQ_TRIGRAM_ZH = 10 # 再次提高
+
+    chunk_manifest = []
+    stats = {"total_unique_words": 0, "chunks_created": 0, "total_size_mb": 0}
+
+    part_files = glob.glob(os.path.join(temp_index_dir, "*.part"))
+
+    for part_file in part_files:
+        chunk_key = os.path.basename(part_file).replace('.part', '')
+        print(f"  -> 正在处理分块: {chunk_key}")
+        
+        # 根据分块类型，选择不同的过滤阈值
+        is_chinese_chunk = (chunk_key == 'zh')
+        if is_chinese_chunk:
+            print("     - 应用更高的中文词条过滤阈值。")
+            unigram_thresh, bigram_thresh, trigram_thresh = MIN_FREQ_UNIGRAM_ZH, MIN_FREQ_BIGRAM_ZH, MIN_FREQ_TRIGRAM_ZH
+        else:
+            unigram_thresh, bigram_thresh, trigram_thresh = MIN_FREQ_UNIGRAM, MIN_FREQ_BIGRAM, MIN_FREQ_TRIGRAM
+        
+        # 1. 在内存中为当前分块构建索引
+        chunk_index = defaultdict(list)
+        with open(part_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                try:
+                    token, paper_id = line.strip().split('\t')
+                    chunk_index[token].append(paper_id)
+                except ValueError:
+                    continue # Skip malformed lines
+
+        # 2. 过滤低频词 (更智能的策略)
+        frequent_chunk_index = {}
+        for token, ids in chunk_index.items():
+            num_words = token.count(' ') + 1
+            freq = len(ids)
+            
+            keep = False
+            if num_words == 1 and freq >= unigram_thresh:
+                keep = True
+            elif num_words == 2 and freq >= bigram_thresh:
+                keep = True
+            elif num_words >= 3 and freq >= trigram_thresh:
+                keep = True
+            
+            if keep:
+                # 去重并排序
+                frequent_chunk_index[token] = sorted(list(set(ids)))
+        
+        if not frequent_chunk_index:
+            print(f"     - 分块 {chunk_key} 无高频词，已跳过。")
+            continue
+
+        # 3. 写入最终的JSON分块文件
+        chunk_filename = f"search_index_{chunk_key}.json"
+        chunk_path = os.path.join(output_dir, chunk_filename)
+        with open(chunk_path, 'w', encoding='utf-8') as f:
+            json.dump(frequent_chunk_index, f, ensure_ascii=False, separators=(',', ':'))
+
+        # 4. 收集统计信息
+        chunk_size = os.path.getsize(chunk_path) / (1024 * 1024)
+        word_count = len(frequent_chunk_index)
+        stats["total_unique_words"] += word_count
+        stats["total_size_mb"] += chunk_size
+        stats["chunks_created"] += 1
+        
+        chunk_manifest.append({
+            "key": chunk_key,
+            "filename": chunk_filename,
+            "wordCount": word_count,
+            "sizeMB": round(chunk_size, 2)
+        })
+        print(f"  ✅ 分块 '{chunk_key}' 创建完成: {word_count} 词汇, {chunk_size:.2f} MB")
+
+    # 5. 清理临时目录
+    shutil.rmtree(temp_index_dir)
+    print(f"🗑️ 已删除临时索引目录: {temp_index_dir}")
+
+    # 6. 创建搜索索引清单文件
+    search_manifest_path = os.path.join(output_dir, "search_index_manifest.json")
+    search_manifest_data = {
+        "version": "2.0", "chunked": True, "description": "分块搜索索引，优化加载性能",
+        "chunks": sorted(chunk_manifest, key=lambda x: x["key"]), "totalWords": stats["total_unique_words"],
+        "totalChunks": stats["chunks_created"], "totalSizeMB": round(stats["total_size_mb"], 2),
+        "generatedAt": datetime.now().isoformat()
+    }
+    with open(search_manifest_path, 'w', encoding='utf-8') as f:
+        json.dump(search_manifest_data, f, indent=2, ensure_ascii=False)
+    print("✅ 成功写入搜索索引清单文件 search_index_manifest.json。")
+
+    # --- 第四阶段：写入月度数据、分类索引和主清单文件 ---
+    print("\n开始写入其他数据库文件...")
     for month, papers in monthly_data.items():
         sorted_papers = sorted(papers, key=lambda p: p['date'], reverse=True)
         month_file_path = os.path.join(output_dir, f"database-{month}.json")
@@ -339,11 +460,6 @@ def build_database_from_jsonl():
         json.dump(manifest, f, indent=2, ensure_ascii=False)
     print("成功写入清单文件 index.json。")
 
-    # 构建并保存优化的搜索索引
-    final_search_index = {token: list(ids) for token, ids in search_index.items()}
-    build_optimized_search_index(final_search_index, output_dir)
-    
-    # 构建并保存分类索引
     final_category_index = {category: list(ids) for category, ids in category_index.items()}
     category_index_file_path = os.path.join(output_dir, "category_index.json")
     with open(category_index_file_path, 'w', encoding='utf-8') as f:
@@ -353,6 +469,9 @@ def build_database_from_jsonl():
     if os.path.exists(old_db_path):
         os.remove(old_db_path)
         print(f"已删除旧的数据文件: {old_db_path}")
+
+# 为了安全地应用修复，我将原函数重命名，并创建一个新的调用它的函数
+build_database_from_jsonl = build_database_from_jsonl_fixed
 
 if __name__ == "__main__":
     build_database_from_jsonl()

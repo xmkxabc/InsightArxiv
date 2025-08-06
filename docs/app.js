@@ -583,6 +583,37 @@ setInterval(() => {
 function escapeCQ(str) { return str ? String(str).replace(/'/g, "\\'") : ''; }
 function escapeRegex(string) { return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
+/**
+ * [NEW] 在文本中高亮显示搜索查询（短语优先）
+ * @param {string} text - 要处理的原始文本
+ * @param {string} query - 用户的搜索查询
+ * @returns {string} - 包含高亮HTML的文本
+ */
+function highlightText(text, query) {
+    if (!text || !query || query.length < 2) { // 不高亮过短的查询
+        return text;
+    }
+
+    // 策略1：优先高亮完整短语（不区分大小写）
+    const escapedQuery = escapeRegex(query);
+    const phraseRegex = new RegExp(escapedQuery, 'gi');
+    
+    if (phraseRegex.test(text)) {
+        return text.replace(phraseRegex, match => `<span class="highlight">${match}</span>`);
+    }
+
+    // 策略2：如果找不到完整短语，则高亮所有单个词
+    const queryTokens = query.toLowerCase().split(/\s+/).filter(token => token.length > 1);
+    if (queryTokens.length === 0) {
+        return text;
+    }
+    
+    // 使用 | 连接所有词，并用括号捕获，确保只替换匹配的部分
+    const tokenRegex = new RegExp(`(${queryTokens.map(escapeRegex).join('|')})`, 'gi');
+    
+    return text.replace(tokenRegex, match => `<span class="highlight">${match}</span>`);
+}
+
 // 智能搜索索引加载函数
 async function loadSearchIndex() {
     console.log('🔍 开始智能加载搜索索引...');
@@ -5390,7 +5421,7 @@ function createLazyPaperContent(paper) {
         `;
 }
 
-function createDetailedPaperContent(paper) {
+function createDetailedPaperContent(paper) {    
     // 🔥 新增：数据完整性检查和调试信息
     console.log(`🔍 创建详细内容 for ${paper.id}:`, {
         hasTitle: !!paper.title,
@@ -5422,12 +5453,16 @@ function createDetailedPaperContent(paper) {
         `;
     }
     
-    let title = paper.title || '无标题';
-    if (state.isSearchMode && state.currentQuery && !state.categoryIndex[state.currentQuery] && state.currentQuery !== 'favorites') {
-        const queryTerms = state.currentQuery.toLowerCase().split(/\s+/).filter(Boolean);
-        const regex = new RegExp(queryTerms.map(escapeRegex).join('|'), 'gi');
-        title = title.replace(regex, match => `<span class="highlight">${match}</span>`);
-    }
+    // --- 智能高亮逻辑 ---
+    const shouldHighlight = state.isSearchMode && state.currentQuery && !state.categoryIndex[state.currentQuery] && state.currentQuery !== 'favorites';
+    const query = state.currentQuery;
+
+    const title = shouldHighlight ? highlightText(paper.title || '无标题', query) : (paper.title || '无标题');
+    const zhTitle = shouldHighlight ? highlightText(paper.zh_title || '', query) : (paper.zh_title || '');
+    const abstractText = shouldHighlight ? highlightText(paper.abstract || '无', query) : (paper.abstract || '无');
+    const translationText = shouldHighlight ? highlightText(paper.translation || '无', query) : (paper.translation || '无');
+    const aiCommentsText = shouldHighlight ? highlightText(paper.ai_comments || '', query) : (paper.ai_comments || '');
+    const tldrText = shouldHighlight ? highlightText(paper.tldr || '', query) : (paper.tldr || '');
 
     const keywordsHTML = (paper.keywords && paper.keywords.length > 0) ? paper.keywords.map(kw => `<span class="keyword-tag inline-block bg-blue-100 text-blue-800 text-sm font-medium mr-2 mb-2 px-3 py-1 rounded-full" data-action="search-tag" data-tag-value="${escapeCQ(kw)}">${kw}</span>`).join('') : '无';
     const categoriesHTML = (paper.categories && paper.categories.length > 0) ? paper.categories.map(cat => `<span class="keyword-tag inline-block bg-gray-100 text-gray-600 text-sm font-medium mr-2 mb-2 px-3 py-1 rounded-full" data-action="search-tag" data-tag-value="${escapeCQ(cat)}">${cat}</span>`).join('') : '';
@@ -5500,9 +5535,9 @@ function createDetailedPaperContent(paper) {
             
             <div class="compact-hidden">
                 ${createInfoBox('Comment', paper.comment, 'yellow')}
-                ${createInfoBox('TL;DR', paper.tldr, 'green')}
-                ${paper.ai_comments
-            ? createInfoBox('AI点评', paper.ai_comments, 'indigo')
+                ${createInfoBox('TL;DR', tldrText, 'green')}
+                ${aiCommentsText
+            ? createInfoBox('AI点评', aiCommentsText, 'indigo')
             : `<div class="info-box info-box-indigo"><p class="info-box-title">AI点评:</p><p class="italic text-sm text-gray-500 dark:text-gray-400">暂无AI点评</p></div>`
         }
             </div>
@@ -5512,8 +5547,8 @@ function createDetailedPaperContent(paper) {
                 ${paper.method ? `<h3>研究方法</h3><p class="text-sm">${paper.method}</p><br/>` : ''}
                 ${paper.results ? `<h3>研究结果</h3><p class="text-sm">${paper.results}</p><br/>` : ''}
                 ${paper.conclusion ? `<h3>研究结论</h3><p class="text-sm">${paper.conclusion}</p><br/>` : ''}
-                <h3>摘要翻译</h3><p class="text-sm italic">${paper.translation || '无'}</p><br/>
-                <h3>原文摘要</h3><p class="text-sm italic">${paper.abstract || '无'}</p>
+                <h3>摘要翻译</h3><p class="text-sm italic">${translationText}</p><br/>
+                <h3>原文摘要</h3><p class="text-sm italic">${abstractText}</p>
             </div>
             <div class="flex items-center space-x-4 mt-4 text-sm">
                 <a href="${absUrl}" target="_blank" class="paper-link-abstract font-semibold">摘要页</a>
@@ -5721,6 +5756,43 @@ async function loadNextMonth(triggeredByScroll = true) {
     }
 }
 
+/**
+ * [NEW & OPTIMIZED] 执行搜索查询的核心函数
+ * @param {string} query - 用户输入的搜索字符串
+ * @returns {Set<string>} - 匹配的论文ID集合
+ */
+function executeSearch(query) {
+    const lowerCaseQuery = query.toLowerCase().trim();
+    if (!lowerCaseQuery || !state.searchIndex) return new Set();
+
+    // 策略1：精确短语匹配 (最高优先级)
+    // 这能完美匹配 "Vision Transformer" 这样的多词关键词。
+    if (state.searchIndex[lowerCaseQuery]) {
+        console.log(`🔍 精确短语匹配成功: "${lowerCaseQuery}"`);
+        return new Set(state.searchIndex[lowerCaseQuery]);
+    }
+
+    // 策略2：分词后的"与"逻辑搜索 (AND)
+    console.log(`🔍 未找到精确短语，执行分词搜索: "${lowerCaseQuery}"`);
+    const queryTokens = lowerCaseQuery.split(/\s+/).filter(Boolean);
+    if (queryTokens.length === 0) return new Set();
+
+    let resultSet = null;
+
+    for (const token of queryTokens) {
+        // 直接从索引中获取，O(1)复杂度，非常高效
+        const tokenIds = new Set(state.searchIndex[token] || []);
+        
+        if (resultSet === null) { // 第一个词
+            resultSet = tokenIds;
+        } else { // 后续的词，求交集
+            resultSet = new Set([...resultSet].filter(id => tokenIds.has(id)));
+        }
+        if (resultSet.size === 0) break; // 如果交集为空，提前结束
+    }
+    return resultSet || new Set();
+}
+
 async function handleSearch() {
     if (state.isFetching) return;
     state.isFetching = true;
@@ -5836,78 +5908,29 @@ async function handleSearch() {
             searchInfoEl.classList.remove('hidden');
             searchResultsContainer.innerHTML = '';
 
-            let results = [];
+            let matchingIds = new Set();
             let requiredMonths = new Set();
 
             if (query === 'favorites') {
-                const favoriteIds = Array.from(state.favorites);
-                if (favoriteIds.length > 0) {
-                    requiredMonths = new Set(favoriteIds.map(id => `20${id.substring(0, 2)}-${id.substring(2, 4)}`));
-                }
+                matchingIds = new Set(state.favorites);
             } else {
-                try {
-                    if (!state.categoryIndex) {
-                        updateProgress('加载分类索引...', 10);
-                        state.categoryIndex = await (await fetch('./data/category_index.json')).json();
-                    }
-                    if (!state.searchIndex) {
-                        updateProgress('加载搜索索引...', 20);
-                        state.searchIndex = await loadSearchIndex();
-                    }
-                } catch (error) { 
-                    searchResultsContainer.innerHTML = `<p class="text-center text-red-500">索引文件加载失败: ${error.message}。</p>`; 
-                    return; 
+                if (!state.searchIndex) {
+                    updateProgress('加载搜索索引...', 20);
+                    state.searchIndex = await loadSearchIndex();
                 }
-                
-                let matchingIds = new Set();
                 if (state.categoryIndex[query]) {
                     matchingIds = new Set(state.categoryIndex[query]);
                 } else {
-                    const queryTokens = query.toLowerCase().split(/\s+/).filter(Boolean);
-                    queryTokens.forEach((token, index) => {
-                        const foundIds = new Set();
-                        for (const key in state.searchIndex) {
-                            if (key.includes(token)) {
-                                state.searchIndex[key].forEach(id => foundIds.add(id));
-                            }
-                        }
-                        if (index === 0) {
-                            matchingIds = foundIds;
-                        } else {
-                            matchingIds = new Set([...matchingIds].filter(id => foundIds.has(id)));
-                        }
-                    });
+                    matchingIds = executeSearch(query);
                 }
-                requiredMonths = new Set([...matchingIds].map(id => `20${id.substring(0, 2)}-${id.substring(2, 4)}`));
             }
+            
+            requiredMonths = new Set([...matchingIds].map(id => `20${id.substring(0, 2)}-${id.substring(2, 4)}`));
 
             await fetchWithProgress([...requiredMonths].filter(m => !state.loadedMonths.has(m)));
             updateProgress('整理搜索结果...', 95);
 
-            if (query === 'favorites') {
-                results = Array.from(state.favorites).map(id => state.allPapers.get(id)).filter(Boolean).sort((a, b) => b.date.localeCompare(a.date));
-            } else {
-                let finalMatchingIds = new Set();
-                if (state.categoryIndex[query]) {
-                    finalMatchingIds = new Set(state.categoryIndex[query]);
-                } else {
-                    const queryTokens = query.toLowerCase().split(/\s+/).filter(Boolean);
-                    queryTokens.forEach((token, index) => {
-                        const foundIds = new Set();
-                        for (const key in state.searchIndex) {
-                            if (key.includes(token)) {
-                                state.searchIndex[key].forEach(id => foundIds.add(id));
-                            }
-                        }
-                        if (index === 0) {
-                            finalMatchingIds = foundIds;
-                        } else {
-                            finalMatchingIds = new Set([...finalMatchingIds].filter(id => foundIds.has(id)));
-                        }
-                    });
-                }
-                results = [...finalMatchingIds].map(id => state.allPapers.get(id)).filter(Boolean).sort((a, b) => b.date.localeCompare(a.date));
-            }
+            const results = [...matchingIds].map(id => state.allPapers.get(id)).filter(Boolean).sort((a, b) => b.date.localeCompare(a.date));
 
             state.currentSearchResults = results;
             if (results.length > 0) {
