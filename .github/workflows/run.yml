@@ -51,7 +51,8 @@ jobs:
           TARGET_DATE="${{ steps.date.outputs.TARGET_DATE }}"
           RAW_JSONL_FILE="data/$TARGET_DATE.jsonl"
           echo "Fetching new papers for $TARGET_DATE..."
-          python daily_arxiv/daily_arxiv.py --out "../$RAW_JSONL_FILE" --categories "${{ vars.CATEGORIES }}" --include-cross "${{ vars.INCLUDE_CROSS }}" --include-repl "${{ vars.INCLUDE_REPL }}"
+          python daily_arxiv/daily_arxiv.py --out "../$RAW_JSONL_FILE" --categories "${{ vars.CATEGORIES }}" 
+          ls -l data
           echo "raw_file=$RAW_JSONL_FILE" >> $GITHUB_OUTPUT
 
       - name: "Commit and Push Raw Data"
