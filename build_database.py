@@ -193,43 +193,42 @@ def build_database_from_jsonl():
                         skipped_paper_count += 1
                         continue
 
-                    # --- [核心版本更新逻辑] ---
-                    # 1. 提取基础ID和版本号
+                    # --- [核心版本更新逻辑 - 优化版] ---
+                    # 步骤 1: 提取基础ID和版本号
                     match = re.match(r'(\d+\.\d+)(v\d+)?', paper_id_full)
                     if not match:
                         skipped_paper_count += 1
                         continue
                     
                     base_id = match.group(1)
-                    version = int(match.group(2)[1:]) if match.group(2) else 1
+                    current_version = int(match.group(2)[1:]) if match.group(2) else 1
 
-                    # 2. 检查是否需要更新
+                    # 步骤 2: 检查是否需要更新
                     existing_paper = all_papers_map.get(base_id)
-                    if existing_paper and existing_paper.get('_version', 1) >= version:
-                        # 如果map中已存在的论文版本(existing_paper)比当前处理的论文版本(version)更高或相同，
-                        # 则跳过当前这条记录，从而保留map中已有的高版本。
+                    if existing_paper and existing_paper.get('_version', 0) > current_version:
+                        # 如果已存在的版本明确高于当前版本，则跳过。
+                        # 注意：这里只用 > 而不是 >=，允许版本相同时进行元数据更新。
                         continue
 
-                    # --- 数据整形 ---
+                    # 步骤 3: 无论如何都先进行数据整形，准备一个完整的 paper_data 对象
                     ai_enhanced_info = raw_data.get("AI", {})
                     keywords_str = ai_enhanced_info.get("keywords", "")
                     keywords_list = [kw.strip() for kw in keywords_str.split(',') if kw.strip()] if isinstance(keywords_str, str) else []
 
-                    paper_data = {
+                    current_paper_data = {
                         "id": base_id, # 存储基础ID
                         "full_id": paper_id_full, # 保留完整ID供参考
-                        "_version": version, # 内部使用，记录版本号
+                        "_version": current_version, # 内部使用，记录版本号
                         "title": raw_data.get("title", "无标题"),
                         "date": file_date,
                         "url": raw_data.get("url", f"http://arxiv.org/abs/{paper_id_full}"),
                         "pdf_url": raw_data.get("pdf_link", f"http://arxiv.org/pdf/{paper_id_full}"),
                         "authors": ", ".join(raw_data.get("authors", [])),
                         "abstract": raw_data.get("summary", raw_data.get("abstract", "")),
-                        "comment": raw_data.get("comments", ""), # 修正：爬虫中的字段是 'comments'
+                        "comment": raw_data.get("comment", raw_data.get("comments", "")),
                         "categories": raw_data.get("categories", []),
                         "updated": raw_data.get("updated", file_date),
-                        "first_published": raw_data.get("date", file_date), # 第一次发布日期
-
+                        "first_published": raw_data.get("published", raw_data.get("date", file_date)),
                         "zh_title": ai_enhanced_info.get("title_translation"),
                         "translation": ai_enhanced_info.get("translation"),
                         "keywords": keywords_list,
@@ -240,8 +239,17 @@ def build_database_from_jsonl():
                         "results": ai_enhanced_info.get("result"),
                         "conclusion": ai_enhanced_info.get("conclusion")
                     }
-                    
-                    all_papers_map[base_id] = paper_data
+
+                    # 步骤 4: 执行最终的更新逻辑
+                    if not existing_paper or current_version > existing_paper.get('_version', 0):
+                        # 如果是新论文，或者当前版本更高，则完全替换
+                        all_papers_map[base_id] = current_paper_data
+                    elif current_version == existing_paper.get('_version', 0):
+                        # 如果版本相同，我们可以选择性地更新元数据，比如保留更早的发布日期
+                        existing_paper['first_published'] = min(existing_paper['first_published'], current_paper_data['first_published'])
+                        existing_paper['updated'] = max(existing_paper['updated'], current_paper_data['updated'])
+                        if current_paper_data.get("comment"):
+                            existing_paper['comment'] = current_paper_data['comment']
 
                 except (json.JSONDecodeError, AttributeError, TypeError) as e:
                     # print(f"Skipping line due to error: {e}") # for debugging
@@ -276,6 +284,7 @@ def build_database_from_jsonl():
             paper_data.get("title", ""),
             paper_data.get("abstract", ""),
             paper_data.get("tldr", ""),
+            paper_data.get("comment", ""),
         ]
         english_text_to_index = " ".join(filter(None, english_text_sources)).lower()
         tokens = re.findall(r'\b[a-z]{3,}\b', english_text_to_index)
@@ -289,6 +298,7 @@ def build_database_from_jsonl():
                 paper_data.get("zh_title", ""),
                 paper_data.get("translation", ""),
                 paper_data.get("ai_comments", ""),
+                paper_data.get("tldr", ""),
             ]
             chinese_text_to_index = "".join(filter(None, chinese_text_sources))
             chinese_tokens = jieba.cut_for_search(chinese_text_to_index) # 使用搜索引擎模式
