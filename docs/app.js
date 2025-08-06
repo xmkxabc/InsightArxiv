@@ -6769,19 +6769,16 @@ function setupGlobalEventListeners() {
     });
 
     // 搜索输入框事件
-    let searchTimeout;
     searchInput.addEventListener('input', (event) => {
-        clearTimeout(searchTimeout);
+        // 输入时只更新UI（如清除按钮和搜索建议），不自动搜索
         updateClearButtonVisibility();
         showSearchSuggestions(event.target.value);
-        searchTimeout = setTimeout(() => {
-            if (!state.isFetching) handleSearch();
-        }, 300);
     });
 
     // 键盘导航支持
     searchInput.addEventListener('keydown', (event) => {
-        if (searchSuggestions.classList.contains('visible')) {
+        // 当搜索建议可见时，处理上下键和回车键
+        if (searchSuggestions.classList.contains('visible') && ['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(event.key)) {
             const items = searchSuggestions.querySelectorAll('.suggestion-item');
             switch (event.key) {
                 case 'ArrowDown':
@@ -6795,16 +6792,26 @@ function setupGlobalEventListeners() {
                     updateSuggestionHighlight();
                     break;
                 case 'Enter':
+                    event.preventDefault(); // 阻止任何默认行为，如表单提交
                     if (state.currentSuggestionIndex >= 0) {
-                        event.preventDefault();
                         const suggestion = items[state.currentSuggestionIndex]?.dataset.suggestion;
-                        if (suggestion) selectSuggestion(suggestion);
+                        if (suggestion) {
+                            selectSuggestion(suggestion); // selectSuggestion 内部会调用 handleSearch
+                        }
+                    } else {
+                        // 如果没有高亮建议，则直接使用输入框内容进行搜索
+                        handleSearch();
+                        hideSearchSuggestions();
                     }
                     break;
                 case 'Escape':
                     hideSearchSuggestions();
                     break;
             }
+        } else if (event.key === 'Enter') {
+            // 当搜索建议不可见时，回车键直接触发搜索
+            event.preventDefault();
+            handleSearch();
         }
     });
 
