@@ -54,7 +54,7 @@ jobs:
           TARGET_DATE="${{ steps.date.outputs.TARGET_DATE }}"
           RAW_JSONL_FILE="data/$TARGET_DATE.jsonl"
           echo "Fetching new papers for $TARGET_DATE..."
-          python daily_arxiv/daily_arxiv.py --out "../$RAW_JSONL_FILE" --categories "${{ vars.CATEGORIES }}" 
+          python daily_arxiv/daily_arxiv.py --out "$RAW_JSONL_FILE" --categories "${{ vars.CATEGORIES }}" 
           pwd
           ls -l 
           ls -l data
