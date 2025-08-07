@@ -6,174 +6,174 @@
     {
       "key": "0",
       "filename": "search_index_0.json",
-      "wordCount": 3068,
-      "sizeMB": 0.44
+      "wordCount": 6937,
+      "sizeMB": 0.87
     },
     {
       "key": "a",
       "filename": "search_index_a.json",
-      "wordCount": 2489,
-      "sizeMB": 4.15
+      "wordCount": 35537,
+      "sizeMB": 8.62
     },
     {
       "key": "b",
       "filename": "search_index_b.json",
-      "wordCount": 1383,
-      "sizeMB": 1.19
+      "wordCount": 10727,
+      "sizeMB": 2.33
     },
     {
       "key": "c",
       "filename": "search_index_c.json",
-      "wordCount": 3278,
-      "sizeMB": 4.42
+      "wordCount": 37175,
+      "sizeMB": 8.71
     },
     {
       "key": "d",
       "filename": "search_index_d.json",
-      "wordCount": 2307,
-      "sizeMB": 3.31
+      "wordCount": 27224,
+      "sizeMB": 6.23
     },
     {
       "key": "e",
       "filename": "search_index_e.json",
-      "wordCount": 1702,
-      "sizeMB": 3.43
+      "wordCount": 28796,
+      "sizeMB": 6.96
     },
     {
       "key": "f",
       "filename": "search_index_f.json",
-      "wordCount": 1370,
-      "sizeMB": 2.15
+      "wordCount": 18876,
+      "sizeMB": 4.52
     },
     {
       "key": "g",
       "filename": "search_index_g.json",
-      "wordCount": 1062,
-      "sizeMB": 1.3
+      "wordCount": 12456,
+      "sizeMB": 2.83
     },
     {
       "key": "h",
       "filename": "search_index_h.json",
-      "wordCount": 1128,
-      "sizeMB": 0.94
+      "wordCount": 8565,
+      "sizeMB": 2.39
     },
     {
       "key": "i",
       "filename": "search_index_i.json",
-      "wordCount": 1873,
-      "sizeMB": 3.08
+      "wordCount": 26369,
+      "sizeMB": 6.1
     },
     {
       "key": "j",
       "filename": "search_index_j.json",
-      "wordCount": 254,
-      "sizeMB": 0.08
+      "wordCount": 794,
+      "sizeMB": 0.14
     },
     {
       "key": "k",
       "filename": "search_index_k.json",
-      "wordCount": 370,
-      "sizeMB": 0.24
+      "wordCount": 2444,
+      "sizeMB": 0.54
     },
     {
       "key": "l",
       "filename": "search_index_l.json",
-      "wordCount": 1256,
-      "sizeMB": 2.24
+      "wordCount": 24361,
+      "sizeMB": 5.85
     },
     {
       "key": "m",
       "filename": "search_index_m.json",
-      "wordCount": 2369,
-      "sizeMB": 2.53
+      "wordCount": 20126,
+      "sizeMB": 4.3
     },
     {
       "key": "n",
       "filename": "search_index_n.json",
-      "wordCount": 908,
-      "sizeMB": 1.09
+      "wordCount": 7908,
+      "sizeMB": 1.79
     },
     {
       "key": "o",
       "filename": "search_index_o.json",
-      "wordCount": 986,
-      "sizeMB": 1.29
+      "wordCount": 11090,
+      "sizeMB": 2.63
     },
     {
       "key": "p",
       "filename": "search_index_p.json",
-      "wordCount": 2603,
-      "sizeMB": 3.7
+      "wordCount": 31299,
+      "sizeMB": 7.44
     },
     {
       "key": "q",
       "filename": "search_index_q.json",
-      "wordCount": 291,
-      "sizeMB": 0.28
+      "wordCount": 3151,
+      "sizeMB": 0.66
     },
     {
       "key": "r",
       "filename": "search_index_r.json",
-      "wordCount": 2211,
-      "sizeMB": 2.96
+      "wordCount": 26979,
+      "sizeMB": 6.27
     },
     {
       "key": "s",
       "filename": "search_index_s.json",
-      "wordCount": 3563,
-      "sizeMB": 5.02
+      "wordCount": 44075,
+      "sizeMB": 10.11
     },
     {
       "key": "t",
       "filename": "search_index_t.json",
-      "wordCount": 1755,
-      "sizeMB": 2.67
+      "wordCount": 23228,
+      "sizeMB": 5.27
     },
     {
       "key": "u",
       "filename": "search_index_u.json",
-      "wordCount": 973,
-      "sizeMB": 0.75
+      "wordCount": 6482,
+      "sizeMB": 1.37
     },
     {
       "key": "v",
       "filename": "search_index_v.json",
-      "wordCount": 805,
-      "sizeMB": 0.92
+      "wordCount": 9510,
+      "sizeMB": 2.01
     },
     {
       "key": "w",
       "filename": "search_index_w.json",
-      "wordCount": 693,
-      "sizeMB": 1.22
+      "wordCount": 9874,
+      "sizeMB": 2.47
     },
     {
       "key": "x",
       "filename": "search_index_x.json",
-      "wordCount": 102,
-      "sizeMB": 0.01
+      "wordCount": 228,
+      "sizeMB": 0.02
     },
     {
       "key": "y",
       "filename": "search_index_y.json",
-      "wordCount": 105,
-      "sizeMB": 0.1
+      "wordCount": 952,
+      "sizeMB": 0.2
     },
     {
       "key": "z",
       "filename": "search_index_z.json",
-      "wordCount": 125,
-      "sizeMB": 0.04
+      "wordCount": 358,
+      "sizeMB": 0.09
     },
     {
       "key": "zh",
       "filename": "search_index_zh.json",
-      "wordCount": 32563,
-      "sizeMB": 45.0
+      "wordCount": 101573,
+      "sizeMB": 85.82
     }
   ],
-  "totalWords": 71592,
+  "totalWords": 537094,
   "totalChunks": 28,
-  "totalSizeMB": 94.54,
-  "generatedAt": "2025-08-06T14:53:59.484006"
+  "totalSizeMB": 186.54,
+  "generatedAt": "2025-08-07T05:56:58.954992"
 }
