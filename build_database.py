@@ -309,8 +309,16 @@ def build_database_from_jsonl_fixed():
             for token in search_tokens:
                 first_char = token[0].lower()
                 # 确定分块键 (a-z, 0 for digits, zh for others)
-                chunk_key = '0' if first_char.isdigit() else first_char if first_char.isalpha() and ord(first_char) < 128 else 'zh'
-                
+                if first_char.isdigit():
+                    chunk_key = '0'
+                elif first_char.isalpha() and ord(first_char) < 128:
+                    chunk_key = first_char
+                else:
+                    # Chinese or other non-ASCII characters
+                    # 将 'zh' 分块拆分为10个更小的块，以避免文件过大
+                    num_zh_chunks = 10
+                    chunk_key = f"zh_{hash(token) % num_zh_chunks}"
+
                 if chunk_key not in temp_file_handles:
                     filepath = os.path.join(temp_index_dir, f"{chunk_key}.part")
                     temp_file_handles[chunk_key] = open(filepath, 'a', encoding='utf-8')
@@ -363,7 +371,7 @@ def build_database_from_jsonl_fixed():
         print(f"  -> 正在处理分块: {chunk_key}")
         
         # 根据分块类型，选择不同的过滤阈值
-        is_chinese_chunk = (chunk_key == 'zh')
+        is_chinese_chunk = chunk_key.startswith('zh')
         if is_chinese_chunk:
             print("     - 应用更高的中文词条过滤阈值。")
             unigram_thresh, bigram_thresh, trigram_thresh = MIN_FREQ_UNIGRAM_ZH, MIN_FREQ_BIGRAM_ZH, MIN_FREQ_TRIGRAM_ZH
