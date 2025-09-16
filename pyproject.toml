@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "arxiv>=2.1.3",
+    "arxiv>=2.2.0",
     "dotenv>=0.9.9",
     "langchain>=0.1.20",
     "scrapy>=2.12.0",

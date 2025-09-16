@@ -349,6 +349,10 @@ def enrich_with_arxiv_api(rows: List[Dict], batch_size: int, delay_sec: float, r
             merged["date"] = add["published_at"]  # YYYY-MM-DD
         if add.get("updated_at"):
             merged["updated"] = add["updated_at"]
+        # 新增：写入 comment（并同步到 comments 以兼容旧字段）
+        if add.get("comment") is not None:
+            merged["comment"] = add["comment"] or ""
+            merged["comments"] = merged["comment"]
         out.append(merged)
     return out
 
