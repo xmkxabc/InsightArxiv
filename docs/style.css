@@ -2773,6 +2773,20 @@
           }
         }
         
+/* 新增：GitHub Star 数量徽章通用样式 */
+.star-count-badge {
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 0.75rem; /* 12px */
+  font-weight: 600;
+  padding: 0.125rem 0.5rem; /* 2px 8px */
+  border-radius: 9999px;
+  min-width: 24px;
+  text-align: center;
+  border: 1px solid var(--border-primary);
+  transition: all 0.2s ease;
+}
+        
         /* 我们创建一个工具类来触发动画 */
         .paper-card.animate-in {
           /* 使用一个平滑的缓动函数，并设置动画结束时保持最终状态 */
