@@ -16,14 +16,14 @@ from langchain.prompts import ChatPromptTemplate
 from structure import Structure
 
 # ───────── 1 · 自定义 LLM ──────────
-def _no_retry(f): return f
-
 class ChatGoogleNoRetry(ChatGoogleGenerativeAI):
-    def __init__(self, *a, **kw):
-        req = dict(kw.pop("request_options", {}) or {}); req["retry"] = False
-        super().__init__(*a, request_options=req, **kw)
-        if hasattr(self, "_retry_decorator"):        self._retry_decorator = _no_retry
-        if hasattr(self, "_async_retry_decorator"):  self._async_retry_decorator = _no_retry
+    """A ChatGoogleGenerativeAI subclass that disables internal retries."""
+    # 通过重写创建装饰器的方法，返回一个什么都不做的 lambda 函数，
+    # 从而彻底禁用 LangChain 的内置重试逻辑。
+    def _create_retry_decorator(self) -> Any:
+        return lambda f: f
+    def _create_async_retry_decorator(self) -> Any:
+        return lambda f: f
 
 # ───────── 2 · 免费额度表 ──────────
 FREE = {
@@ -107,7 +107,8 @@ async def invoke(chain, prompt, lim: ComboLimiter, retries: int):
             if "FreeTier" in str(e):
                 lim.exhaust = True; raise
             await asyncio.sleep(4)
-        except Exception:
+        # 捕获其他可重试的 Google API 错误和常规网络错误
+        except (gexc.GoogleAPICallError, IOError) as e:
             await asyncio.sleep(2)
     raise RuntimeError
 
