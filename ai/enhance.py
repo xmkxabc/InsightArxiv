@@ -190,7 +190,7 @@ class ProgressReporter:
 
     @property
     def success_rate(self) -> float:
-        return self.ok / self.bar.n if self.bar.n > 0 else 0
+        return min(1.0, self.ok / self.bar.n) if self.bar.n > 0 else 0
 
     def update(self, result, model, key):
         if key == "FAILED":
