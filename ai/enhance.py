@@ -164,12 +164,15 @@ async def process(paper, lang, retries):
             asyncio.create_task(pool.mark_exhausted(key))
             # 如果密钥失败（例如日配额耗尽），我们不归还它，并继续尝试下一个更高优先级的模型
             continue
-        except IOError: # For other retryable network errors
         except IOError: # For other retryable network errors, retry with the same model and key
             pool.return_key(key) # The key is fine, just the call failed. Return it.
             # 在模型内部进行小范围重试，而不是立即切换到下一个模型
             try:
                 res = await invoke(CHAINS[(key, model)], prm, retries)
+                if res and good(res):
+                    paper["AI"] = res.model_dump()
+                    # 密钥已在上面归还，这里直接返回
+                    return paper, (key, model)
             except (gexc.GoogleAPICallError, IOError):
                 continue # 如果内部重-试仍然失败，则放弃该模型
             continue
