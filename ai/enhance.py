@@ -15,16 +15,6 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.prompts import ChatPromptTemplate
 from structure import Structure
 
-# ───────── 1 · 自定义 LLM ──────────
-class ChatGoogleNoRetry(ChatGoogleGenerativeAI):
-    """A ChatGoogleGenerativeAI subclass that disables internal retries."""
-    # 通过重写创建装饰器的方法，返回一个什么都不做的 lambda 函数，
-    # 从而彻底禁用 LangChain 的内置重试逻辑。
-    def _create_retry_decorator(self) -> Any:
-        return lambda f: f
-    def _create_async_retry_decorator(self) -> Any:
-        return lambda f: f
-
 # ───────── 2 · 免费额度表 ──────────
 FREE = {
     # Model Rate Limits (RPM, RPD)
@@ -126,16 +116,16 @@ for model in MODELS:
     POOLS[model] = KeyPool(API_KEYS, model)
     rpm, rpd = POOLS[model].rpm, POOLS[model].rpd
     print(f"🔹 Model Pool: {model:<18} | Keys: {TOTAL_KEYS} | Aggregate RPM: {rpm*TOTAL_KEYS} | RPD/key: {rpd}")
+    # 兼容新旧 langchain-google-genai 的 api_key 参数
+    # 新版用 google_api_key，旧版用 api_key
+    key_param_name = "google_api_key"
+    try: ChatGoogleGenerativeAI(model="gemini-pro", google_api_key="test")
+    except TypeError: key_param_name = "api_key"
+
     for key in API_KEYS:
-        try:   llm = ChatGoogleNoRetry(model=model, google_api_key=key)
-        except TypeError:
-            llm = ChatGoogleNoRetry(model=model, api_key=key)
-        except TypeError: # 兼容旧版 langchain-google-genai 的 api_key 参数
-            llm = ChatGoogleNoRetry(model=model, api_key=key, max_retries=0)
+        llm_kwargs = {"model": model, "max_retries": 0, key_param_name: key}
+        llm = ChatGoogleGenerativeAI(**llm_kwargs)
         CHAINS[(key, model)] = PROMPT | llm.with_structured_output(Structure)
-        # 显式禁用重试，因为覆盖 _create_async_retry_decorator 可能在新版中失效
-        if "max_retries" not in llm.__fields_set__:
-            CHAINS[(key, model)].middle[0].max_retries = 0
 
 # ───────── 6 · 工具函数 ──────────
 good = lambda r: all(v and str(v).strip() and v != "ERROR" for v in r.model_dump().values())
