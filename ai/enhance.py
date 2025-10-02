@@ -4,7 +4,7 @@
 enhance_arxiv.py — 并发 + 进度条 + 模型与 Key 编号显示 + 使用统计 + 健壮性防御
 """
 
-import os, sys, json, time, argparse, asyncio
+import os, sys, json, time, argparse, asyncio, random
 from typing import Dict, Tuple, Any, List, Optional
 from collections import Counter
 
@@ -35,6 +35,7 @@ def cli():
     ap.add_argument("--language", default="Chinese")
     ap.add_argument("--retries", type=int, default=3)
     ap.add_argument("--concurrency", type=int, default=None, help="并发数。如果未设置，将默认为 API 密钥数量的 2 倍。")
+    ap.add_argument("--max-passes", type=int, default=5, help="最大重试轮数，以防止无限循环。")
     return ap.parse_args()
 
 dotenv.load_dotenv()
@@ -132,22 +133,28 @@ good = lambda r: all(v and str(v).strip() and v != "ERROR" for v in r.model_dump
 
 async def invoke(chain, prompt, retries: int):
     last_exception = None
+    backoff_factor = 1.0  # Initial backoff delay in seconds
     for i in range(retries):
         try:
             return await chain.ainvoke(prompt)
         except gexc.ResourceExhausted as e:
             # 这是一个不可恢复的错误，直接向上抛出
             raise e
+        except gexc.PermissionDenied as e:
+            # 403 错误，通常是 RPD 耗尽或 Key 无效，直接向上抛出
+            raise e
         # 捕获其他可重试的 Google API 错误和常规网络错误
         except (gexc.GoogleAPICallError, IOError) as e:
             last_exception = e
-            await asyncio.sleep(2)
+            wait_time = backoff_factor * (2 ** i) + random.uniform(0, 1)
+            await asyncio.sleep(wait_time)
     # 如果所有重试都失败，抛出最后一次捕获的可重试异常
     raise IOError("Failed after multiple retries") from last_exception
 
 # ───────── 7 · 单篇处理 ──────────
 async def process(paper, lang, retries):
     if not paper or not isinstance(paper, dict): return None
+    last_error = "Unknown error"
     prm = {"title": paper["title"], "content": paper["summary"], "language": lang}
     for model in MODELS:
         pool = POOLS[model]
@@ -161,20 +168,29 @@ async def process(paper, lang, retries):
         except gexc.ResourceExhausted as e:
             # 达到了RPM（每分钟请求数）限制。将密钥归还以进行冷却，并尝试使用同一模型的另一个密钥。
             # 此密钥在冷却后将再次可用。
+            last_error = f"Model '{model}' hit ResourceExhausted (RPM limit). Retrying with another key. Details: {e}"
             pool.return_key(key)
             # 记录这个临时问题，但继续循环的下一次迭代，尝试 *相同* 的模型（它将获取一个新的密钥）。
             # 我们还不会切换到下一个模型。
-            # 短暂的延迟有助于分散请求。
-            await asyncio.sleep(1)
             continue
-        except (IOError, gexc.GoogleAPICallError) as e:
+        except gexc.PermissionDenied as e:
+            # 403 错误，通常意味着 RPD（每日请求数）耗尽或密钥无效。
+            # 将此密钥标记为今日耗尽，然后尝试下一个模型。
+            last_error = f"Key ...{key[-6:]} hit PermissionDenied (likely RPD limit or invalid). Deactivating key for today. Details: {e}"
+            await pool.mark_exhausted(key)
+            continue
+        except (IOError, gexc.GoogleAPICallError, Exception) as e:
             # 经过多次重试后，发生了持久的、非速率限制的错误。
             # 密钥本身可能没问题，但这个模型/密钥组合当前存在问题。
             # 归还密钥并尝试下一个模型。
+            last_error = f"Persistent error with model '{model}' after retries. Details: {type(e).__name__}: {e}"
             pool.return_key(key)
             continue
 
-    paper["AI"] = {f: "ERROR" for f in Structure.model_fields.keys()}
+    # 所有模型都尝试失败后，记录最终错误
+    error_payload = {f: "ERROR" for f in Structure.model_fields.keys()}
+    error_payload["error_details"] = last_error
+    paper["AI"] = error_payload
     return paper, ("FAILED", "FAILED")
 
 # ───────── 8 · 进度与统计 ──────────
@@ -239,27 +255,52 @@ async def main():
 
     print(f"\n📑 {total} papers | concurrency {concurrency}\n")
 
-    sem = asyncio.Semaphore(concurrency)
-    async def worker(p):
-        async with sem:
-            return await process(p, args.language, args.retries)
+    # ─── 主处理循环，直到所有论文都成功处理 ───
+    processed_papers = {} # 使用字典以ID为键，方便更新
+    unprocessed_papers = papers
+    pass_num = 1
 
-    processed: List[dict] = []
-    reporter = ProgressReporter(total)
-    for coro in asyncio.as_completed([worker(p) for p in papers]):
-        result = await coro
-        if result is None:
-            continue
-        paper, (k, m) = result
-        # 无论成功与否，都将结果加入列表，以保证输出文件保留所有论文记录
-        processed.append(paper)
+    while unprocessed_papers and pass_num <= args.max_passes:
+        print(f"\n🚀 Starting Pass {pass_num} with {len(unprocessed_papers)} papers to process...")
+        sem = asyncio.Semaphore(concurrency)
+        reporter = ProgressReporter(len(unprocessed_papers))
 
-        reporter.update(paper, m, k)
-    reporter.close()
+        async def worker(p):
+            async with sem:
+                return await process(p, args.language, args.retries)
+
+        tasks = [worker(p) for p in unprocessed_papers]
+
+        # 清空待处理列表，准备收集本轮失败的论文
+        unprocessed_papers = []
+
+        for coro in asyncio.as_completed(tasks):
+            result = await coro
+            if result is None: continue
+
+            paper, (k, m) = result
+            reporter.update(paper, m, k)
+
+            if k == "FAILED":
+                unprocessed_papers.append(paper) # 如果失败，则加入下一轮重试
+            else:
+                processed_papers[paper['id']] = paper # 如果成功，存入最终结果
+
+        reporter.close()
+        pass_num += 1
+
+    # 如果在达到最大轮数后仍有未处理的论文，则发出警告并将其添加到最终结果中
+    if unprocessed_papers:
+        print(f"\n⚠️ Reached max passes ({args.max_passes}). {len(unprocessed_papers)} papers still failed to process.")
+        for paper in unprocessed_papers:
+            processed_papers[paper['id']] = paper # 将最终失败状态的论文添加到结果中
 
     outp = args.data.replace(".jsonl", f"_AI_enhanced_{args.language}.jsonl")
     with open(outp, "w", encoding="utf-8") as f:
-        for row in processed:
+        # 按原始顺序写入，保证输出文件顺序与输入一致
+        for original_paper in papers:
+            row = processed_papers.get(original_paper['id'])
+            if row is None: continue # 理论上不应发生
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
     print(f"📁 输出保存至：{outp}")
 
