@@ -27,13 +27,14 @@ class ChatGoogleNoRetry(ChatGoogleGenerativeAI):
 
 # ───────── 2 · 免费额度表 ──────────
 FREE = {
-    "gemini-2.5-flash":   (10, 250),
-    "gemini-2.5-pro":     (5, 100),
-    "gemini-2.5-flash-lite": (15, 1000),
-    "gemini-2.0-flash":   (15, 200),
-    "gemini-2.0-flash-lite": (30, 200),
-    "gemini-1.5-flash":   (15, 50),
-    "gemini-1.5-pro":     (2, 50),
+    # Model Rate Limits (RPM, RPD)
+    "gemini-flash-latest": (10, 250),
+    "gemini-flash-lite-latest": (15, 1000),
+    "gemini-2.5-flash-lite":  (15, 1000), # 包含 gemini-flash-lite-latest
+    "gemini-2.5-pro":         (5, 100),
+    "gemini-2.5-flash":       (10, 250),  # 包含 gemini-flash-latest
+    "gemini-2.0-flash-lite":  (30, 200),
+    "gemini-2.0-flash":       (15, 200),
 }
 quota = lambda m: next((v for p, v in FREE.items() if m.startswith(p)), (10, 250))
 
@@ -57,21 +58,59 @@ MODEL_INDEX = {m: idx for idx, m in enumerate(MODELS, 1)}
 TOTAL_KEYS, TOTAL_MODELS = len(API_KEYS), len(MODELS)
 
 # ───────── 4 · ComboLimiter ──────────
-class ComboLimiter:
-    def __init__(self, rpm, rpd):
-        self.intv, self.rpd = 60/rpm, rpd
-        self.calls, self.next_t, self.exhaust = 0, 0.0, False
+# 全局共享的、当天已耗尽 RPD 的 Key 黑名单
+EXHAUSTED_KEYS = set()
+
+class KeyPool:
+    """Manages a pool of API keys to maximize aggregate throughput for a model."""
+    def __init__(self, keys: List[str], model: str):
+        self.model = model
+        self.rpm, self.rpd = quota(model)
+        self.cooldown = 60.0 / self.rpm if self.rpm > 0 else 0
+        
+        # RPD tracking
+        self.rpd_counter = Counter()
         self.lock = asyncio.Lock()
-    async def __aenter__(self):
-        if self.exhaust: raise RuntimeError
+
+        self.queue = asyncio.Queue()
+        for key in keys:
+            self.queue.put_nowait(key)
+
+    async def get_key(self) -> str:
+        """
+        Gets an available key from the pool that has not reached its RPD limit.
+        Blocks if no keys are available (either in cooldown or all are RPD-exhausted).
+        """
+        while True:
+            key = await self.queue.get()
+            # 检查该 Key 是否已在全局黑名单中
+            if key in EXHAUSTED_KEYS:
+                # 如果在，则不放回队列，继续获取下一个
+                continue
+
+            async with self.lock:
+                if self.rpd_counter[key] < self.rpd:
+                    # Key is valid, increment its usage and return
+                    self.rpd_counter[key] += 1
+                    return key
+            # If we are here, the key was RPD-exhausted.
+            # We don't put it back, effectively removing it from the pool for today.
+            # The loop continues to get the next available key.
+
+    def return_key(self, key: str):
+        """Schedules a key to be returned to the pool after its cooldown."""
+        asyncio.create_task(self._cooldown_and_return(key))
+
+    async def mark_exhausted(self, key: str):
+        """Forcefully marks a key as RPD-exhausted."""
+        EXHAUSTED_KEYS.add(key)
         async with self.lock:
-            now = time.monotonic()
-            wait = self.next_t - now
-            if wait > 0: await asyncio.sleep(wait)
-            self.next_t = max(now, self.next_t) + self.intv
-            self.calls += 1
-            if self.calls >= self.rpd: self.exhaust = True
-    async def __aexit__(self, *_) : ...
+            self.rpd_counter[key] = self.rpd
+
+    async def _cooldown_and_return(self, key: str):
+        if self.cooldown > 0:
+            await asyncio.sleep(self.cooldown)
+        await self.queue.put(key)
 
 # ───────── 5 · Prompt 与 Chain 初始化 ──────────
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -81,56 +120,66 @@ PROMPT = ChatPromptTemplate.from_messages([
 ])
 
 CHAINS : Dict[Tuple[str, str], Any] = {}
-LIMITER: Dict[Tuple[str, str], ComboLimiter] = {}
+POOLS  : Dict[str, KeyPool] = {}
 
-for key in API_KEYS:
-    for model in MODELS:
-        rpm, rpd = quota(model)
-        LIMITER[(key, model)] = ComboLimiter(rpm, rpd)
+for model in MODELS:
+    POOLS[model] = KeyPool(API_KEYS, model)
+    rpm, rpd = POOLS[model].rpm, POOLS[model].rpd
+    print(f"🔹 Model Pool: {model:<18} | Keys: {TOTAL_KEYS} | Aggregate RPM: {rpm*TOTAL_KEYS} | RPD/key: {rpd}")
+    for key in API_KEYS:
         try:   llm = ChatGoogleNoRetry(model=model, google_api_key=key)
         except TypeError:
             llm = ChatGoogleNoRetry(model=model, api_key=key)
+        except TypeError: # 兼容旧版 langchain-google-genai 的 api_key 参数
+            llm = ChatGoogleNoRetry(model=model, api_key=key, max_retries=0)
         CHAINS[(key, model)] = PROMPT | llm.with_structured_output(Structure)
-        print(f"✔ {model:<18} @ {key[:6]}… RPM={rpm} RPD={rpd}")
+        # 显式禁用重试，因为覆盖 _create_async_retry_decorator 可能在新版中失效
+        if "max_retries" not in llm.__fields_set__:
+            CHAINS[(key, model)].middle[0].max_retries = 0
 
 # ───────── 6 · 工具函数 ──────────
 good = lambda r: all(v and str(v).strip() and v != "ERROR" for v in r.model_dump().values())
 
-async def invoke(chain, prompt, lim: ComboLimiter, retries: int):
-    for _ in range(retries):
+async def invoke(chain, prompt, retries: int):
+    last_exception = None
+    for i in range(retries):
         try:
-            async with lim:
-                return await chain.ainvoke(prompt)
-        except RuntimeError:
-            raise
+            return await chain.ainvoke(prompt)
         except gexc.ResourceExhausted as e:
-            if "FreeTier" in str(e):
-                lim.exhaust = True; raise
-            await asyncio.sleep(4)
+            # 这是一个不可恢复的错误，直接向上抛出
+            raise e
         # 捕获其他可重试的 Google API 错误和常规网络错误
         except (gexc.GoogleAPICallError, IOError) as e:
+            last_exception = e
             await asyncio.sleep(2)
-    raise RuntimeError
+    # 如果所有重试都失败，抛出最后一次捕获的可重试异常
+    raise IOError("Failed after multiple retries") from last_exception
 
 # ───────── 7 · 单篇处理 ──────────
 async def process(paper, lang, retries):
     if not paper or not isinstance(paper, dict): return None
     prm = {"title": paper["title"], "content": paper["summary"], "language": lang}
-    last_combo = None
     for model in MODELS:
-        for key in API_KEYS:
-            lim = LIMITER[(key, model)]
-            if lim.exhaust: continue
-            last_combo = (key, model)
-            try:
-                res = await invoke(CHAINS[(key, model)], prm, lim, retries)
-                if res and good(res):
-                    paper["AI"] = res.model_dump()
-                    return paper, last_combo
-            except (RuntimeError, gexc.ResourceExhausted):
-                continue
+        pool = POOLS[model]
+        key = await pool.get_key()
+        try:
+            res = await invoke(CHAINS[(key, model)], prm, retries)
+            if res and good(res):
+                paper["AI"] = res.model_dump()
+                pool.return_key(key) # 成功后归还密钥
+                return paper, (key, model)
+        except gexc.ResourceExhausted:
+            # The key is definitively exhausted for the day. Mark it as such.
+            # 该 Key 的 RPD (每日配额) 已耗尽。将其加入全局黑名单并从当前池中标记。
+            asyncio.create_task(pool.mark_exhausted(key))
+            # 如果密钥失败（例如日配额耗尽），我们不归还它，并继续尝试下一个更高优先级的模型
+            continue
+        except IOError: # For other retryable network errors
+            pool.return_key(key) # The key is fine, just the call failed. Return it.
+            continue
+
     paper["AI"] = {f: "ERROR" for f in Structure.model_fields.keys()}
-    return paper, last_combo
+    return paper, ("FAILED", "FAILED")
 
 # ───────── 8 · 进度与统计 ──────────
 class ProgressReporter:
@@ -140,14 +189,21 @@ class ProgressReporter:
         self.model_counter = Counter()
         self.key_counter = Counter()
 
+    @property
+    def success_rate(self) -> float:
+        return self.ok / self.bar.n if self.bar.n > 0 else 0
+
     def update(self, result, model, key):
-        if result and "AI" in result and all(v != "ERROR" for v in result["AI"].values()):
-            self.ok += 1
+        if key == "FAILED":
+            self.bar.update()
+            return
+        self.ok += 1 # 只要不是 FAILED，就视为一次成功的 API 调用
         self.model_counter[model] += 1
         self.key_counter[key] += 1
         self.bar.set_postfix(
-            model=f"{model}[{MODEL_INDEX[model]}/{TOTAL_MODELS}]",
-            key=f"{KEY_INDEX[key]}/{TOTAL_KEYS}·{key[:6]}"
+            model=f"{model}[{MODEL_INDEX.get(model, 'X')}/{TOTAL_MODELS}]",
+            key=f"{KEY_INDEX.get(key, 'X')}/{TOTAL_KEYS}·{key[:6]}",
+            ok=f"{self.success_rate:.1%}"
         )
         self.bar.update()
 
@@ -193,7 +249,9 @@ async def main():
         if result is None:
             continue
         paper, (k, m) = result
+        # 无论成功与否，都将结果加入列表，以保证输出文件保留所有论文记录
         processed.append(paper)
+
         reporter.update(paper, m, k)
     reporter.close()
 
