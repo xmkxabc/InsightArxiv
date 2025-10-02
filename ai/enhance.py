@@ -158,23 +158,20 @@ async def process(paper, lang, retries):
                 paper["AI"] = res.model_dump()
                 pool.return_key(key) # 成功后归还密钥
                 return paper, (key, model)
-        except gexc.ResourceExhausted:
-            # The key is definitively exhausted for the day. Mark it as such.
-            # 该 Key 的 RPD (每日配额) 已耗尽。将其加入全局黑名单并从当前池中标记。
-            asyncio.create_task(pool.mark_exhausted(key))
-            # 如果密钥失败（例如日配额耗尽），我们不归还它，并继续尝试下一个更高优先级的模型
+        except gexc.ResourceExhausted as e:
+            # 达到了RPM（每分钟请求数）限制。将密钥归还以进行冷却，并尝试使用同一模型的另一个密钥。
+            # 此密钥在冷却后将再次可用。
+            pool.return_key(key)
+            # 记录这个临时问题，但继续循环的下一次迭代，尝试 *相同* 的模型（它将获取一个新的密钥）。
+            # 我们还不会切换到下一个模型。
+            # 短暂的延迟有助于分散请求。
+            await asyncio.sleep(1)
             continue
-        except IOError: # For other retryable network errors, retry with the same model and key
-            pool.return_key(key) # The key is fine, just the call failed. Return it.
-            # 在模型内部进行小范围重试，而不是立即切换到下一个模型
-            try:
-                res = await invoke(CHAINS[(key, model)], prm, retries)
-                if res and good(res):
-                    paper["AI"] = res.model_dump()
-                    # 密钥已在上面归还，这里直接返回
-                    return paper, (key, model)
-            except (gexc.GoogleAPICallError, IOError):
-                continue # 如果内部重-试仍然失败，则放弃该模型
+        except (IOError, gexc.GoogleAPICallError) as e:
+            # 经过多次重试后，发生了持久的、非速率限制的错误。
+            # 密钥本身可能没问题，但这个模型/密钥组合当前存在问题。
+            # 归还密钥并尝试下一个模型。
+            pool.return_key(key)
             continue
 
     paper["AI"] = {f: "ERROR" for f in Structure.model_fields.keys()}
