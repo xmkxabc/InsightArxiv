@@ -158,23 +158,20 @@ async def process(paper, lang, retries):
                 paper["AI"] = res.model_dump()
                 pool.return_key(key) # 成功后归还密钥
                 return paper, (key, model)
-        except gexc.ResourceExhausted:
-            # The key is definitively exhausted for the day. Mark it as such.
-            # 该 Key 的 RPD (每日配额) 已耗尽。将其加入全局黑名单并从当前池中标记。
-            asyncio.create_task(pool.mark_exhausted(key))
-            # 如果密钥失败（例如日配额耗尽），我们不归还它，并继续尝试下一个更高优先级的模型
+        except gexc.ResourceExhausted as e:
+            # RPM limit hit. Return the key for cooldown and try the same model with another key.
+            # This key will be available again after the cooldown.
+            pool.return_key(key)
+            # Log the temporary issue but continue to the next iteration of the loop for the *same* model
+            # which will fetch a new key. We don't switch to the next model yet.
+            # A small delay can help distribute requests.
+            await asyncio.sleep(1)
             continue
-        except IOError: # For other retryable network errors, retry with the same model and key
-            pool.return_key(key) # The key is fine, just the call failed. Return it.
-            # 在模型内部进行小范围重试，而不是立即切换到下一个模型
-            try:
-                res = await invoke(CHAINS[(key, model)], prm, retries)
-                if res and good(res):
-                    paper["AI"] = res.model_dump()
-                    # 密钥已在上面归还，这里直接返回
-                    return paper, (key, model)
-            except (gexc.GoogleAPICallError, IOError):
-                continue # 如果内部重-试仍然失败，则放弃该模型
+        except (IOError, gexc.GoogleAPICallError) as e:
+            # A persistent, non-rate-limit error occurred after retries.
+            # The key is likely fine, but this model/key combo is problematic.
+            # Return the key and try the next model.
+            pool.return_key(key)
             continue
 
     paper["AI"] = {f: "ERROR" for f in Structure.model_fields.keys()}
