@@ -34,7 +34,7 @@ def cli():
     ap.add_argument("--data", required=True)
     ap.add_argument("--language", default="Chinese")
     ap.add_argument("--retries", type=int, default=3)
-    ap.add_argument("--concurrency", type=int, default=10)
+    ap.add_argument("--concurrency", type=int, default=None, help="并发数。如果未设置，将默认为 API 密钥数量的 2 倍。")
     return ap.parse_args()
 
 dotenv.load_dotenv()
@@ -165,7 +165,13 @@ async def process(paper, lang, retries):
             # 如果密钥失败（例如日配额耗尽），我们不归还它，并继续尝试下一个更高优先级的模型
             continue
         except IOError: # For other retryable network errors
+        except IOError: # For other retryable network errors, retry with the same model and key
             pool.return_key(key) # The key is fine, just the call failed. Return it.
+            # 在模型内部进行小范围重试，而不是立即切换到下一个模型
+            try:
+                res = await invoke(CHAINS[(key, model)], prm, retries)
+            except (gexc.GoogleAPICallError, IOError):
+                continue # 如果内部重-试仍然失败，则放弃该模型
             continue
 
     paper["AI"] = {f: "ERROR" for f in Structure.model_fields.keys()}
@@ -192,7 +198,7 @@ class ProgressReporter:
         self.key_counter[key] += 1
         self.bar.set_postfix(
             model=f"{model}[{MODEL_INDEX.get(model, 'X')}/{TOTAL_MODELS}]",
-            key=f"{KEY_INDEX.get(key, 'X')}/{TOTAL_KEYS}·{key[:6]}",
+            key=f"{KEY_INDEX.get(key, 'X')}/{TOTAL_KEYS}·...{key[-6:]}",
             ok=f"{self.success_rate:.1%}"
         )
         self.bar.update()
@@ -205,11 +211,17 @@ class ProgressReporter:
             print(f"  {m:<20} : {c}")
         print("📊 Key 使用分布：")
         for k, c in self.key_counter.items():
-            print(f"  {k[:6]}… : {c}")
+            print(f"  ...{k[-6:]} : {c}")
 
 # ───────── 9 · 主程序 ──────────
 async def main():
     args = cli()
+
+    # 如果用户没有指定并发数，则根据 API 密钥数量自动设置
+    concurrency = args.concurrency
+    if concurrency is None:
+        concurrency = len(API_KEYS) * 2
+        print(f"ℹ️ 未指定并发数，已根据密钥数量自动设置为: {concurrency}")
 
     # 读文件 & 去重
     seen, papers = set(), []
@@ -225,9 +237,9 @@ async def main():
         print(f"⚠️ 输入文件无可处理数据：{args.data}")
         return
 
-    print(f"\n📑 {total} papers | concurrency {args.concurrency}\n")
+    print(f"\n📑 {total} papers | concurrency {concurrency}\n")
 
-    sem = asyncio.Semaphore(args.concurrency)
+    sem = asyncio.Semaphore(concurrency)
     async def worker(p):
         async with sem:
             return await process(p, args.language, args.retries)
