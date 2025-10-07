@@ -44,6 +44,16 @@ MODELS   = [m.strip() for m in os.getenv("MODEL_PRIORITY_LIST", "").split(",") i
 if not API_KEYS or not MODELS:
     sys.exit("❌ 环境变量 GOOGLE_API_KEYS / MODEL_PRIORITY_LIST 未设置")
 
+sort_pref = os.getenv("MODEL_SORT_BY_QUOTA", "off").lower()
+if sort_pref not in {"0", "false", "off"}:
+    # 高日配额模型优先，其次参考 RPM，稳定排序保证相同配额保留原顺序
+    original_order = {m: idx for idx, m in enumerate(MODELS)}
+    MODELS = sorted(
+        MODELS,
+        key=lambda m: (*quota(m)[::-1], -original_order[m]),
+        reverse=True,
+    )
+
 KEY_INDEX   = {k: idx for idx, k in enumerate(API_KEYS, 1)}
 MODEL_INDEX = {m: idx for idx, m in enumerate(MODELS, 1)}
 TOTAL_KEYS, TOTAL_MODELS = len(API_KEYS), len(MODELS)
@@ -52,12 +62,34 @@ TOTAL_KEYS, TOTAL_MODELS = len(API_KEYS), len(MODELS)
 # 全局共享的、当天已耗尽 RPD 的 Key 黑名单
 EXHAUSTED_KEYS = set()
 
+
+class NoAvailableKey(RuntimeError):
+    """Raised when no API key in a pool has remaining quota."""
+    pass
+
+
+def is_daily_quota_error(exc: gexc.ResourceExhausted) -> bool:
+    """
+    Best-effort detection of daily quota exhaustion messages so we can retire keys
+    instead of hammering them with pointless retries.
+    """
+    message = str(exc).lower()
+    daily_tokens = (
+        "quota exceeded for metric",
+        "generate_content_free_tier_requests",
+        "generaterequestsperday",
+        "please retry in",
+        "retry_delay",
+    )
+    return any(token in message for token in daily_tokens)
+
 class KeyPool:
     """Manages a pool of API keys to maximize aggregate throughput for a model."""
     def __init__(self, keys: List[str], model: str):
         self.model = model
         self.rpm, self.rpd = quota(model)
         self.cooldown = 60.0 / self.rpm if self.rpm > 0 else 0
+        self._all_keys = list(keys)
         
         # RPD tracking
         self.rpd_counter = Counter()
@@ -73,6 +105,8 @@ class KeyPool:
         Blocks if no keys are available (either in cooldown or all are RPD-exhausted).
         """
         while True:
+            if not self._has_quota_left():
+                raise NoAvailableKey(f"Model '{self.model}' has no remaining daily quota.")
             key = await self.queue.get()
             # 检查该 Key 是否已在全局黑名单中
             if key in EXHAUSTED_KEYS:
@@ -80,6 +114,8 @@ class KeyPool:
                 continue
 
             async with self.lock:
+                if key in EXHAUSTED_KEYS or self.rpd_counter[key] >= self.rpd:
+                    continue
                 if self.rpd_counter[key] < self.rpd:
                     # Key is valid, increment its usage and return
                     self.rpd_counter[key] += 1
@@ -90,7 +126,8 @@ class KeyPool:
 
     def return_key(self, key: str):
         """Schedules a key to be returned to the pool after its cooldown."""
-        asyncio.create_task(self._cooldown_and_return(key))
+        if self._can_reuse_key(key):
+            asyncio.create_task(self._cooldown_and_return(key))
 
     async def mark_exhausted(self, key: str):
         """Forcefully marks a key as RPD-exhausted."""
@@ -101,7 +138,14 @@ class KeyPool:
     async def _cooldown_and_return(self, key: str):
         if self.cooldown > 0:
             await asyncio.sleep(self.cooldown)
-        await self.queue.put(key)
+        if self._can_reuse_key(key):
+            await self.queue.put(key)
+
+    def _has_quota_left(self) -> bool:
+        return any(self._can_reuse_key(k) for k in self._all_keys)
+
+    def _can_reuse_key(self, key: str) -> bool:
+        return key not in EXHAUSTED_KEYS and self.rpd_counter[key] < self.rpd
 
 # ───────── 5 · Prompt 与 Chain 初始化 ──────────
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -158,7 +202,11 @@ async def process(paper, lang, retries):
     prm = {"title": paper["title"], "content": paper["summary"], "language": lang}
     for model in MODELS:
         pool = POOLS[model]
-        key = await pool.get_key()
+        try:
+            key = await pool.get_key()
+        except NoAvailableKey as e:
+            last_error = str(e)
+            continue
         try:
             res = await invoke(CHAINS[(key, model)], prm, retries)
             if res and good(res):
@@ -166,12 +214,15 @@ async def process(paper, lang, retries):
                 pool.return_key(key) # 成功后归还密钥
                 return paper, (key, model)
         except gexc.ResourceExhausted as e:
-            # 达到了RPM（每分钟请求数）限制。将密钥归还以进行冷却，并尝试使用同一模型的另一个密钥。
-            # 此密钥在冷却后将再次可用。
-            last_error = f"Model '{model}' hit ResourceExhausted (RPM limit). Retrying with another key. Details: {e}"
-            pool.return_key(key)
-            # 记录这个临时问题，但继续循环的下一次迭代，尝试 *相同* 的模型（它将获取一个新的密钥）。
-            # 我们还不会切换到下一个模型。
+            if is_daily_quota_error(e):
+                last_error = f"Key ...{key[-6:]} exhausted daily quota on model '{model}'. Details: {e}"
+                await pool.mark_exhausted(key)
+            else:
+                # 达到了RPM（每分钟请求数）限制。将密钥归还以进行冷却，并尝试使用同一模型的另一个密钥。
+                # 此密钥在冷却后将再次可用。
+                last_error = f"Model '{model}' hit ResourceExhausted (RPM limit). Retrying with another key. Details: {e}"
+                pool.return_key(key)
+            # 继续下一次循环尝试使用相同模型的其他密钥或切换模型
             continue
         except gexc.PermissionDenied as e:
             # 403 错误，通常意味着 RPD（每日请求数）耗尽或密钥无效。
@@ -236,8 +287,9 @@ async def main():
     # 如果用户没有指定并发数，则根据 API 密钥数量自动设置
     concurrency = args.concurrency
     if concurrency is None:
-        concurrency = len(API_KEYS) * 2
-        print(f"ℹ️ 未指定并发数，已根据密钥数量自动设置为: {concurrency}")
+        per_model_rpm = sum(quota(m)[0] for m in MODELS)
+        concurrency = max(1, min(len(API_KEYS), per_model_rpm))
+        print(f"ℹ️ 未指定并发数，基于配额自动设置为: {concurrency} (keys={len(API_KEYS)}, sum_rpm_per_key={per_model_rpm})")
 
     # 读文件 & 去重
     seen, papers = set(), []
