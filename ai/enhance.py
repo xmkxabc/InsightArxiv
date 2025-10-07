@@ -44,7 +44,7 @@ MODELS   = [m.strip() for m in os.getenv("MODEL_PRIORITY_LIST", "").split(",") i
 if not API_KEYS or not MODELS:
     sys.exit("❌ 环境变量 GOOGLE_API_KEYS / MODEL_PRIORITY_LIST 未设置")
 
-sort_pref = os.getenv("MODEL_SORT_BY_QUOTA", "off").lower()
+sort_pref = os.getenv("MODEL_SORT_BY_QUOTA", "auto").lower()
 if sort_pref not in {"0", "false", "off"}:
     # 高日配额模型优先，其次参考 RPM，稳定排序保证相同配额保留原顺序
     original_order = {m: idx for idx, m in enumerate(MODELS)}
@@ -59,8 +59,8 @@ MODEL_INDEX = {m: idx for idx, m in enumerate(MODELS, 1)}
 TOTAL_KEYS, TOTAL_MODELS = len(API_KEYS), len(MODELS)
 
 # ───────── 4 · ComboLimiter ──────────
-# 全局共享的、当天已耗尽 RPD 的 Key 黑名单
-EXHAUSTED_KEYS = set()
+# 每个模型上的日额度耗尽名单
+EXHAUSTED_BY_MODEL: Dict[str, set] = {m: set() for m in set(MODELS)}
 
 
 class NoAvailableKey(RuntimeError):
@@ -90,6 +90,7 @@ class KeyPool:
         self.rpm, self.rpd = quota(model)
         self.cooldown = 60.0 / self.rpm if self.rpm > 0 else 0
         self._all_keys = list(keys)
+        self._exhausted = EXHAUSTED_BY_MODEL.setdefault(model, set())
         
         # RPD tracking
         self.rpd_counter = Counter()
@@ -109,12 +110,12 @@ class KeyPool:
                 raise NoAvailableKey(f"Model '{self.model}' has no remaining daily quota.")
             key = await self.queue.get()
             # 检查该 Key 是否已在全局黑名单中
-            if key in EXHAUSTED_KEYS:
+            if key in self._exhausted:
                 # 如果在，则不放回队列，继续获取下一个
                 continue
 
             async with self.lock:
-                if key in EXHAUSTED_KEYS or self.rpd_counter[key] >= self.rpd:
+                if key in self._exhausted or self.rpd_counter[key] >= self.rpd:
                     continue
                 if self.rpd_counter[key] < self.rpd:
                     # Key is valid, increment its usage and return
@@ -130,8 +131,8 @@ class KeyPool:
             asyncio.create_task(self._cooldown_and_return(key))
 
     async def mark_exhausted(self, key: str):
-        """Forcefully marks a key as RPD-exhausted."""
-        EXHAUSTED_KEYS.add(key)
+        """Forcefully marks a key as RPD-exhausted for this model."""
+        self._exhausted.add(key)
         async with self.lock:
             self.rpd_counter[key] = self.rpd
 
@@ -145,7 +146,7 @@ class KeyPool:
         return any(self._can_reuse_key(k) for k in self._all_keys)
 
     def _can_reuse_key(self, key: str) -> bool:
-        return key not in EXHAUSTED_KEYS and self.rpd_counter[key] < self.rpd
+        return key not in self._exhausted and self.rpd_counter[key] < self.rpd
 
 # ───────── 5 · Prompt 与 Chain 初始化 ──────────
 ROOT = os.path.dirname(os.path.abspath(__file__))
