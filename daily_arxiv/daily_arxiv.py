@@ -98,14 +98,14 @@ class ArxivNewSpider(scrapy.Spider):
     PAT_REPL  = re.compile(r"\breplacement(s)?\b(?:.*\bsubmissions?\b)?", re.I)
 
     BASE_SETTINGS = dict(
-        ROBOTSTXT_OBEY=True,
+        ROBOTSTXT_OBEY=False, # arXiv /list pages disallow all, but we need it. Be gentle.
         USER_AGENT="InsightArxivBot/1.0 (+contact)",
-        CONCURRENT_REQUESTS=12,
-        CONCURRENT_REQUESTS_PER_DOMAIN=12,
+        CONCURRENT_REQUESTS=4,
+        CONCURRENT_REQUESTS_PER_DOMAIN=4,
         DOWNLOAD_TIMEOUT=20,
         RETRY_TIMES=2,
         AUTOTHROTTLE_ENABLED=True,
-        AUTOTHROTTLE_START_DELAY=0.25,
+        AUTOTHROTTLE_START_DELAY=1.0,
         AUTOTHROTTLE_MAX_DELAY=2.0,
         RANDOMIZE_DOWNLOAD_DELAY=True,
         HTTPCACHE_ENABLED=False, # 默认关闭缓存（可开启）
