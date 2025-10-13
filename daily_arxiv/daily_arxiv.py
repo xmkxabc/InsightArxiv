@@ -100,14 +100,11 @@ class ArxivNewSpider(scrapy.Spider):
     BASE_SETTINGS = dict(
         ROBOTSTXT_OBEY=False, # arXiv /list pages disallow all, but we need it. Be gentle.
         USER_AGENT="InsightArxivBot/1.0 (+contact)",
-        CONCURRENT_REQUESTS=4,
-        CONCURRENT_REQUESTS_PER_DOMAIN=4,
-        DOWNLOAD_TIMEOUT=20,
-        RETRY_TIMES=2,
-        AUTOTHROTTLE_ENABLED=True,
-        AUTOTHROTTLE_START_DELAY=1.0,
-        AUTOTHROTTLE_MAX_DELAY=2.0,
-        RANDOMIZE_DOWNLOAD_DELAY=True,
+        CONCURRENT_REQUESTS=1,
+        CONCURRENT_REQUESTS_PER_DOMAIN=1,
+        DOWNLOAD_TIMEOUT=180,           # 为加载大页面提供足够时间
+        DOWNLOAD_DELAY=3.0,             # 固定的下载延迟以避免限流
+        RANDOMIZE_DOWNLOAD_DELAY=True,  # 随机化延迟
         HTTPCACHE_ENABLED=False, # 默认关闭缓存（可开启）
         HTTPCACHE_EXPIRATION_SECS=1800,
         HTTPCACHE_DIR="httpcache",
@@ -115,20 +112,13 @@ class ArxivNewSpider(scrapy.Spider):
         # "LOG_LEVEL": "INFO",
     )
 
-    def __init__(self, *, categories: List[str], window: str, show: int,
-                 include_cross: bool, include_repl: bool):
+    def __init__(self, *, include_cross: bool, include_repl: bool, **kwargs):
         super().__init__()
-        self.categories = categories
-        self.window = window
-        self.show = show
         self.include_cross = include_cross
         self.include_repl = include_repl
-        self.start_urls = [f"https://arxiv.org/list/{c}/{self.window}?show={self.show}" for c in self.categories]
+        self.start_urls = ["https://arxiv.org/list/cs/new", "https://arxiv.org/list/math.NA/new", "https://arxiv.org/list/eess/new"]
         self.seen_ids = set()  # 跨分类去重（按无版本 id）
-        self.logger.info(
-            f"[init] cats={len(self.categories)} window={self.window} show={self.show} "
-            f"include_cross={self.include_cross} include_repl={self.include_repl}"
-        )
+        self.logger.info(f"[init] urls={len(self.start_urls)} include_cross={self.include_cross} include_repl={self.include_repl}")
 
     # 工具：安全取文本（保留基本空格，但压缩多空格）
     def _text(self, sel, css: str) -> str:
@@ -165,8 +155,9 @@ class ArxivNewSpider(scrapy.Spider):
         return out
 
     def parse(self, response):
-        cat = response.url.split("/")[-2]
-        self.logger.info(f"[parse] {cat}: {response.url}")
+        # 从 URL 中提取分类代码
+        match = re.search(r"/list/([^/]+)/", response.url)
+        self.logger.info(f"[parse] {match.group(1) if match else 'unknown'}: {response.url}")
 
         total_yield = 0
 
@@ -381,28 +372,13 @@ def parse_args():
     include_cross_default = env_bool_multi(["INCLUDE_CROSS", "include_cross"], DEFAULT_INCLUDE_CROSS)
     include_repl_default  = env_bool_multi(["INCLUDE_REPL", "include_repl"], DEFAULT_INCLUDE_REPL)
 
-    p = argparse.ArgumentParser(description="Fetch arXiv /new for multiple categories and output JSONL.")
+    p = argparse.ArgumentParser(description="Fetch arXiv new papers and output to a JSONL file.")
     p.add_argument("--out", default=env_out or os.path.join(".", f"arxiv_new_{datetime.now(SGT).strftime('%Y%m%d')}.jsonl"),
                    help="输出 JSONL 路径（默认当前目录）；若设置 RAW_JSONL_FILE/TARGET_DATE 会自动匹配 Actions 命名")
-    p.add_argument("--categories", default=env_categories or ",".join(DEFAULT_CATEGORIES),
-                   help="逗号分隔的分类列表（ENV:CATEGORIES 可覆盖）")
-    p.add_argument("--window", choices=["new","recent","pastweek"], default=(env_window or "new"),
-                   help="列表窗口（默认 new；ENV:WINDOW 可覆盖）")
-    p.add_argument("--show", type=int, default=int(env_show or 2000),
-                   help="每页展示条数（默认 2000；ENV:SHOW 可覆盖）")
 
     # 段落开关（默认打开以便验证；可用 程序常量 / ENV / CLI 调整）
     p.add_argument("--include-cross", action="store_true", default=include_cross_default, help="包含 Cross-lists / Cross submissions")
     p.add_argument("--include-repl", action="store_true", default=include_repl_default, help="包含 Replacements / Replacement submissions")
-
-    # Scrapy 调优
-    p.add_argument("--concurrent-req", type=int, default=int(os.getenv("CONCURRENT_REQUESTS", 12)))
-    p.add_argument("--concurrent-per-domain", type=int, default=int(os.getenv("CR_PER_DOMAIN", 12)))
-    p.add_argument("--download-timeout", type=int, default=int(os.getenv("DOWNLOAD_TIMEOUT", 20)))
-    p.add_argument("--retry-times", type=int, default=int(os.getenv("RETRY_TIMES", 2)))
-    p.add_argument("--at-start", type=float, default=float(os.getenv("AT_START", 0.25)))
-    p.add_argument("--at-max", type=float, default=float(os.getenv("AT_MAX", 2.0)))
-    p.add_argument("--httpcache-ttl", type=int, default=int(os.getenv("CACHE_TTL", 1800)))
     p.add_argument("--log-level", default=os.getenv("LOG_LEVEL", "INFO"))
 
     # 元数据富化（默认 True）
@@ -420,36 +396,21 @@ def parse_args():
 def main():
     args = parse_args()
 
-    categories = [c.strip() for c in args.categories.split(",") if c.strip()]
-
-    # 将 CLI 覆盖到 Scrapy 设置（确保 CLI 生效）
+    # 仅从 CLI 更新 LOG_LEVEL
     settings = dict(ArxivNewSpider.BASE_SETTINGS)
-    settings.update(dict(
-        CONCURRENT_REQUESTS=args.concurrent_req,
-        CONCURRENT_REQUESTS_PER_DOMAIN=args.concurrent_per_domain,
-        DOWNLOAD_TIMEOUT=args.download_timeout,
-        RETRY_TIMES=args.retry_times,
-        AUTOTHROTTLE_START_DELAY=args.at_start,
-        AUTOTHROTTLE_MAX_DELAY=args.at_max,
-        HTTPCACHE_EXPIRATION_SECS=args.httpcache_ttl,
-        LOG_LEVEL=args.log_level,
-    ))
+    if args.log_level:
+        settings["LOG_LEVEL"] = args.log_level
 
     collected: List[Dict] = []
 
     def _collect_item(item, response, spider):
-        try:
-            collected.append(dict(item))
-        except Exception:
-            pass
+        # item 本身就是 dict-like, 直接添加即可
+        collected.append(dict(item))
 
     dispatcher.connect(_collect_item, signal=signals.item_scraped)
 
     process = CrawlerProcess(settings=settings)
     process.crawl(ArxivNewSpider,
-                  categories=categories,
-                  window=args.window,
-                  show=args.show,
                   include_cross=args.include_cross,
                   include_repl=args.include_repl)
 
