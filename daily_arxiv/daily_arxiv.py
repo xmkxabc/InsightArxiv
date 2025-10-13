@@ -55,12 +55,17 @@ except Exception:
         return x
 
 # ─────────────── 默认配置（可被 程序常量 / 环境变量 / CLI 覆盖） ───────────────
+# DEFAULT_CATEGORIES: List[str] = [
+#     "cs.AI","cs.AR","cs.CC","cs.CE","cs.CG","cs.CL","cs.CR","cs.CV","cs.CY","cs.DB",
+#     "cs.DC","cs.DL","cs.DM","cs.DS","cs.ET","cs.FL","cs.GL","cs.GR","cs.GT","cs.HC",
+#     "cs.IR","cs.IT","cs.LG","cs.LO","cs.MA","cs.MM","cs.MS","cs.NA","cs.NE","cs.NI",
+#     "cs.OH","cs.OS","cs.PF","cs.PL","cs.RO","cs.SC","cs.SD","cs.SE","cs.SI","cs.SY",
+#     "eess.AS","eess.IV","eess.SP","eess.SY","math.NA","stat.AP","q-fin.MF",
+# ]
 DEFAULT_CATEGORIES: List[str] = [
-    "cs.AI","cs.AR","cs.CC","cs.CE","cs.CG","cs.CL","cs.CR","cs.CV","cs.CY","cs.DB",
-    "cs.DC","cs.DL","cs.DM","cs.DS","cs.ET","cs.FL","cs.GL","cs.GR","cs.GT","cs.HC",
-    "cs.IR","cs.IT","cs.LG","cs.LO","cs.MA","cs.MM","cs.MS","cs.NA","cs.NE","cs.NI",
-    "cs.OH","cs.OS","cs.PF","cs.PL","cs.RO","cs.SC","cs.SD","cs.SE","cs.SI","cs.SY",
-    "eess.AS","eess.IV","eess.SP","eess.SY","math.NA","stat.AP","q-fin.MF",
+    "cs",  # 代表所有计算机子类
+    "eess",# 代表所有电子与系统子类
+    "math.NA","stat.AP","q-fin.MF",
 ]
 
 # 👉 便于验证 cross/repl，默认先 **打开**（你也可通过 ENV/CLI 改成关闭）
@@ -112,13 +117,18 @@ class ArxivNewSpider(scrapy.Spider):
         # "LOG_LEVEL": "INFO",
     )
 
-    def __init__(self, *, include_cross: bool, include_repl: bool, **kwargs):
+    def __init__(self, *, categories: List[str], include_cross: bool, include_repl: bool, **kwargs):
         super().__init__()
+        self.categories = categories
         self.include_cross = include_cross
         self.include_repl = include_repl
-        self.start_urls = ["https://arxiv.org/list/cs/new", "https://arxiv.org/list/math.NA/new", "https://arxiv.org/list/eess/new"]
+        # 恢复动态 URL 生成，并为大类智能添加 ?show=2000
+        self.start_urls = [
+            f"https://arxiv.org/list/{c}/new?show=2000" if c in ("cs", "eess") else f"https://arxiv.org/list/{c}/new"
+            for c in self.categories
+        ]
         self.seen_ids = set()  # 跨分类去重（按无版本 id）
-        self.logger.info(f"[init] urls={len(self.start_urls)} include_cross={self.include_cross} include_repl={self.include_repl}")
+        self.logger.info(f"[init] cats={len(self.categories)} include_cross={self.include_cross} include_repl={self.include_repl}")
 
     # 工具：安全取文本（保留基本空格，但压缩多空格）
     def _text(self, sel, css: str) -> str:
@@ -283,18 +293,19 @@ def enrich_with_arxiv_api(rows: List[Dict], batch_size: int, delay_sec: float, r
             yield seq[i:i+n]
 
     meta: Dict[str, Dict] = {}
-    for chunk in tqdm(list(chunked(ids, batch_size)), desc="arXiv API", unit="batch"):
+    id_chunks = list(chunked(ids, batch_size))
+    for i, chunk in enumerate(tqdm(id_chunks, desc="arXiv API", unit="batch")):
         results = []
-        for attempt in range(retries):
+        for attempt in range(retries + 1):
             try:
                 search = arxiv.Search(id_list=chunk)
                 results = list(client.results(search))
                 break
-            except Exception:
-                if attempt == retries - 1:
-                    results = []
-                else:
-                    time.sleep(2)
+            except Exception as e:
+                wait_time = (2 ** attempt) + (i * 0.1) # 指数退避 + 批次抖动
+                print(f"  Batch {i+1}/{len(id_chunks)} failed on try {attempt+1}. Retrying in {wait_time:.1f}s... Error: {e}", file=sys.stderr)
+                if attempt < retries:
+                    time.sleep(wait_time)
         for r in results:
             rid = getattr(r, "get_short_id", lambda: None)() or r.entry_id.split("/")[-1]
             rid = re.sub(r"v\d+$", "", rid)
@@ -375,6 +386,8 @@ def parse_args():
     p = argparse.ArgumentParser(description="Fetch arXiv new papers and output to a JSONL file.")
     p.add_argument("--out", default=env_out or os.path.join(".", f"arxiv_new_{datetime.now(SGT).strftime('%Y%m%d')}.jsonl"),
                    help="输出 JSONL 路径（默认当前目录）；若设置 RAW_JSONL_FILE/TARGET_DATE 会自动匹配 Actions 命名")
+    p.add_argument("--categories", default=env_categories or ",".join(DEFAULT_CATEGORIES),
+                   help="逗号分隔的分类列表（ENV:CATEGORIES 可覆盖）")
 
     # 段落开关（默认打开以便验证；可用 程序常量 / ENV / CLI 调整）
     p.add_argument("--include-cross", action="store_true", default=include_cross_default, help="包含 Cross-lists / Cross submissions")
@@ -396,6 +409,15 @@ def parse_args():
 def main():
     args = parse_args()
 
+    # 展开大类为子类列表，并保持用户指定的顺序
+    raw_categories = [c.strip() for c in args.categories.split(",") if c.strip()]
+    categories = []
+    seen_cats = set()
+    for cat in raw_categories:
+        if cat not in seen_cats:
+            categories.append(cat)
+            seen_cats.add(cat)
+
     # 仅从 CLI 更新 LOG_LEVEL
     settings = dict(ArxivNewSpider.BASE_SETTINGS)
     if args.log_level:
@@ -411,6 +433,7 @@ def main():
 
     process = CrawlerProcess(settings=settings)
     process.crawl(ArxivNewSpider,
+                  categories=categories,
                   include_cross=args.include_cross,
                   include_repl=args.include_repl)
 
