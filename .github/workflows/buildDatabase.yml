@@ -73,15 +73,15 @@ jobs:
           git commit -m "build(site): update database, report, and README for ${{ steps.build_site.outputs.raw_jsonl_file_name }}" || echo "No changes to commit."
           git push
 
-      # --- [可选] 创建每日速报 Issue ---
-      # 如果需要，可以取消下面的注释来重新启用此功能
-      - name: Create or Update Daily Digest Issue
-        uses: peter-evans/create-issue-from-file@v5
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          title: "每日速报 (Daily Digest): ${{ steps.build_site.outputs.raw_jsonl_file_name }}"
-          content-filepath: "${{ steps.build_site.outputs.report_path }}"
-          labels: daily-digest, automated
+      # # --- [可选] 创建每日速报 Issue ---
+      # # 如果需要，可以取消下面的注释来重新启用此功能
+      # - name: Create or Update Daily Digest Issue
+      #   uses: peter-evans/create-issue-from-file@v5
+      #   with:
+      #     token: ${{ secrets.GITHUB_TOKEN }}
+      #     title: "每日速报 (Daily Digest): ${{ steps.build_site.outputs.raw_jsonl_file_name }}"
+      #     content-filepath: "${{ steps.build_site.outputs.report_path }}"
+      #     labels: daily-digest, automated
 
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v5
