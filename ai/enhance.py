@@ -34,8 +34,12 @@ def _no_retry(f): return f
 class ChatGoogleNoRetry(ChatGoogleGenerativeAI):
     def __init__(self, *a, **kw):
         # 在初始化参数中强制设置retry为False
-        req = dict(kw.pop("request_options", {}) or {}); req["retry"] = False
-        super().__init__(*a, request_options=req, **kw)
+        model_kwargs = dict(kw.pop("model_kwargs", {}) or {})
+        request_opts = dict(model_kwargs.get("request_options") or {})
+        request_opts["retry"] = False
+        model_kwargs["request_options"] = request_opts
+        kw["model_kwargs"] = model_kwargs
+        super().__init__(*a, **kw)
         # 覆盖内部的重试装饰器，使其失效
         if hasattr(self, "_retry_decorator"):        self._retry_decorator = _no_retry
         if hasattr(self, "_async_retry_decorator"):  self._async_retry_decorator = _no_retry
@@ -119,7 +123,7 @@ except FileNotFoundError as e:
 # 初始化用于存储LangChain调用链和速率限制器的字典
 CHAINS : Dict[Tuple[str, str], Any] = {}
 LIMITER: Dict[Tuple[str, str], ComboLimiter] = {}
-print("正在初始化模型与密钥组合...")
+print("Initializing model/key combinations...")
 # 遍历所有模型和密钥的组合，为每一个组合创建实例
 for model in MODELS:
     for key in API_KEYS:
@@ -134,7 +138,7 @@ for model in MODELS:
         # 将提示、LLM和结构化输出解析器组合成一个调用链
         CHAINS[(key, model)] = PROMPT | llm.with_structured_output(Structure)
         # 打印初始化信息，显示密钥的后六位
-        print(f"✔ {model:<25} @ …{key[-6:]} RPM={rpm:<3} RPD={rpd:<4}")
+        print(f"[OK] {model:<25} @ ...{key[-6:]} RPM={rpm:<3} RPD={rpd:<4}")
 
 # ───────── 6 · 工具函数 ──────────
 # 检查AI返回的结果是否有效（非空、非"ERROR"字符串）
@@ -222,20 +226,20 @@ class ProgressReporter:
         self.key_counter[key] += 1
         # 更新进度条的后缀信息，显示密钥后六位
         self.bar.set_postfix_str(
-            f"ok={self.ok}/{self.bar.n}, model={model}[{MODEL_INDEX[model]}/{TOTAL_MODELS}], key=…{key[-6:]}[{KEY_INDEX[key]}/{TOTAL_KEYS}]"
+            f"ok={self.ok}/{self.bar.n}, model={model}[{MODEL_INDEX[model]}/{TOTAL_MODELS}], key=...{key[-6:]}[{KEY_INDEX[key]}/{TOTAL_KEYS}]"
         )
         self.bar.update()
 
     def close(self):
         self.bar.close()
-        print(f"\n✅ {self.ok}/{self.bar.total} 完成\n")
-        print("📊 模型使用分布：")
+        print(f"\n[Summary] {self.ok}/{self.bar.total} succeeded\n")
+        print("[Stats] Model usage distribution:")
         for m, c in self.model_counter.most_common():
             print(f"  {m:<25} : {c}")
-        print("\n📊 Key 使用分布：")
+        print("\n[Stats] Key usage distribution:")
         # 最终统计也显示密钥后六位
         for k, c in self.key_counter.most_common():
-            print(f"  …{k[-6:]} [Key {KEY_INDEX[k]}/{TOTAL_KEYS}] : {c}")
+            print(f"  ...{k[-6:]} [Key {KEY_INDEX[k]}/{TOTAL_KEYS}] : {c}")
 
 # ───────── 9 · 主程序 ──────────
 async def main():
@@ -259,7 +263,7 @@ async def main():
 
     total = len(papers)
     if total == 0:
-        print(f"⚠️ 输入文件无可处理数据：{args.data}")
+        print(f"[Warn] No usable records found in {args.data}")
         return
 
     # 核心并发控制：并发数由密钥数量动态确定
@@ -273,7 +277,7 @@ async def main():
     # 使用asyncio.Semaphore来限制同时运行的worker总数
     sem = asyncio.Semaphore(concurrency)
     
-    print(f"\n📑 {total} papers | Concurrency: {concurrency} (auto-set) | Cooling: Dynamic (based on model RPM)\n")
+    print(f"\n[Run] {total} papers | Concurrency: {concurrency} (auto-set) | Cooling: Dynamic (based on model RPM)\n")
 
     # 辅助函数：根据动态延迟，将Key异步归还到资源池
     async def cooldown_and_return_key(key: str, delay: float):
@@ -303,7 +307,7 @@ async def main():
                 return paper_res, combo_res
             except Exception as e:
                 # 捕获worker内部的未知严重错误，确保程序不会崩溃
-                print(f"\n🔥 Worker 内部发生严重错误: {e}")
+                print(f"\n[Error] Worker raised exception: {e}")
                 # 即使出错，也要确保Key能被归还
                 asyncio.create_task(cooldown_and_return_key(preferred_key, delay))
                 paper["AI"] = {f: "FATAL_ERROR" for f in Structure.model_fields.keys()}
@@ -340,11 +344,11 @@ async def main():
         for row in papers:
             if row['id'] in processed_map:
                 f.write(json.dumps(processed_map[row['id']], ensure_ascii=False) + "\n")
-    print(f"📁 输出保存至：{outp}")
+    print(f"[Done] Output saved to: {outp}")
 
 # 程序入口
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n🚫 操作被用户中断。")
+        print("\n[Info] Interrupted by user.")

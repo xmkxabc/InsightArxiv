@@ -71,10 +71,22 @@ jobs:
           ENHANCED_JSONL_FILE="data/${{ steps.date.outputs.TARGET_DATE }}_AI_enhanced_${LANGUAGE:-Chinese}.jsonl"
           echo "enhanced_file=$ENHANCED_JSONL_FILE" >> $GITHUB_OUTPUT
 
+      - name: "Step 2b: Re-enhance ERROR AI entries"
+        id: re_enhance
+        run: |
+          source .venv/bin/activate
+          ENHANCED_JSONL_FILE="${{ steps.enhance.outputs.enhanced_file }}"
+          echo "Re-enhancing paper data with AI for file: $ENHANCED_JSONL_FILE..."
+          python ai/re_enhance_errors.py \
+            --data "$ENHANCED_JSONL_FILE" \
+            --api-keys "$GOOGLE_API_KEYS" \
+            --model-priority "$MODEL_PRIORITY_LIST"
+          echo "re_enhanced_file=$ENHANCED_JSONL_FILE" >> $GITHUB_OUTPUT
+
       - name: "Commit and Push Enhanced Data"
         run: |
           git pull origin main --rebase --autostash
-          git add ${{ steps.enhance.outputs.enhanced_file }}
+          git add ${{ steps.re_enhance.outputs.re_enhanced_file }}
           git commit -m "feat(data): enhance papers for ${{ steps.date.outputs.TARGET_DATE }}" || echo "No changes to commit."
           git push
 
