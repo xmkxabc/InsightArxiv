@@ -117,25 +117,36 @@ This project is open-sourced under the [MIT License](LICENSE).
 
 ---
 
-## **Latest Bulletin: 2026-01-30**
+## **Latest Bulletin: 2026-02-02**
 
-> [**Read the full report for 2026-01-30...**](./data/2026-01-30.md)
+> [**Read the full report for 2026-02-02...**](./data/2026-02-02.md)
 
 ---
 
 ### **Past 7 Days**
 
+- [2026-01-30](./data/2026-01-30.md)
 - [2026-01-29](./data/2026-01-29.md)
 - [2026-01-28](./data/2026-01-28.md)
 - [2026-01-27](./data/2026-01-27.md)
 - [2026-01-26](./data/2026-01-26.md)
 - [2026-01-23](./data/2026-01-23.md)
-- [2026-01-22](./data/2026-01-22.md)
 
 
 ---
 
 ### **Recent Calendar**
+
+#### February 2026
+
+| Mon | Tue | Wed | Thu | Fri | Sat | Sun |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+|   |   |   |   |   |   | 1 |
+| [2](./data/2026-02-02.md) | 3 | 4 | 5 | 6 | 7 | 8 |
+| 9 | 10 | 11 | 12 | 13 | 14 | 15 |
+| 16 | 17 | 18 | 19 | 20 | 21 | 22 |
+| 23 | 24 | 25 | 26 | 27 | 28 |   |
+
 
 #### January 2026
 
