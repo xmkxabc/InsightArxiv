@@ -2,15 +2,15 @@
 #!/usr/bin/env python3
 """
 Re-run ai/enhance.py for records whose AI block is still entirely "ERROR".
-Usage example:
+Usage example (single file):
   uv run python re_enhance_errors.py \
-      --data data/2025-11-05_AI_enhanced_Chinese.jsonl \
-      --api-keys KEY1,KEY2 \
-      --model-priority gemini-flash-latest,gemini-2.5-flash,gemini-flash-lite-latest,gemini-2.5-flash-lite
-This will modify the specified JSONL file in place.
+      --data data/2025-11-05_AI_enhanced_Chinese.jsonl
 
-uv run python re_enhance_errors.py --data data/2025-11-05_AI_enhanced_Chinese.jsonl --api-keys KEY1,KEY2 --model-priority gemini-flash-latest,gemini-2.5-flash,gemini-flash-lite-latest,gemini-2.5-flash-lite
+Usage example (batch/glob):
+  uv run python re_enhance_errors.py \
+      --glob "data/*_AI_enhanced_Chinese.jsonl"
 
+This will modify the specified JSONL file(s) in place.
 """
 import argparse
 import json
@@ -20,6 +20,9 @@ import subprocess
 import tempfile
 from pathlib import Path
 from typing import Dict, List
+
+import dotenv
+dotenv.load_dotenv(Path(__file__).parent / ".env")
 
 AI_FIELDS = [
     "title_translation",
@@ -48,11 +51,17 @@ def run_batch_enhance(
     runner: str,
     api_keys: str,
     model_priority: str,
+    skip_probe: bool = False,
 ) -> Dict[str, Dict]:
     if not papers:
         return {}
 
-    with tempfile.TemporaryDirectory() as tmpdir:
+    # 临时目录放在项目根目录下，与 data/ 同盘，避免跨盘复制
+    project_root = Path(__file__).parent.parent
+    tmp_base = project_root / ".tmp_enhance"
+    tmp_base.mkdir(exist_ok=True)
+
+    with tempfile.TemporaryDirectory(dir=tmp_base) as tmpdir:
         tmp_in = Path(tmpdir) / "batch.jsonl"
         with tmp_in.open("w", encoding="utf-8") as fh:
             for paper in papers:
@@ -61,8 +70,10 @@ def run_batch_enhance(
         tmp_out = tmp_in.with_name(f"{tmp_in.stem}_AI_enhanced_{language}{tmp_in.suffix}")
 
         env = os.environ.copy()
-        env["GOOGLE_API_KEYS"] = api_keys
-        env["MODEL_PRIORITY_LIST"] = model_priority
+        if api_keys:
+            env["GOOGLE_API_KEYS"] = api_keys
+        if model_priority:
+            env["MODEL_PRIORITY_LIST"] = model_priority
 
         cmd = shlex.split(runner) + [
             "ai/enhance.py",
@@ -71,25 +82,24 @@ def run_batch_enhance(
             "--language",
             language,
         ]
+        if skip_probe:
+            cmd.append("--probe")
+        proc = subprocess.Popen(
+            cmd,
+            env=env,
+        )
         try:
-            result = subprocess.run(
-                cmd,
-                env=env,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError as exc:
-            combined = (exc.stdout or "") + ("\n" + exc.stderr if exc.stderr else "")
-            msg = ["Failed to run enhance.py."]
-            if combined.strip():
-                msg.append("Captured output:\n" + combined.strip())
-            raise RuntimeError("\n".join(msg)) from exc
-        else:
-            if result.stdout:
-                print(result.stdout.rstrip())
-            if result.stderr:
-                print(result.stderr.rstrip())
+            proc.wait(timeout=86400)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            raise RuntimeError("enhance.py timed out after 24 hours.")
+        except KeyboardInterrupt:
+            proc.kill()
+            proc.wait()
+            raise
+        if proc.returncode != 0:
+            raise RuntimeError(f"enhance.py exited with code {proc.returncode}.")
 
         if not tmp_out.exists():
             raise FileNotFoundError(f"Expected enhanced file at {tmp_out}")
@@ -105,39 +115,9 @@ def run_batch_enhance(
         return results
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Re-enhance ERROR AI entries in a JSONL file.")
-    parser.add_argument("--data", required=True, help="Path to the enhanced JSONL file.")
-    parser.add_argument(
-        "--language",
-        default="Chinese",
-        help="Language parameter passed to enhance.py (default: Chinese).",
-    )
-    parser.add_argument(
-        "--api-keys",
-        help="Comma-separated GOOGLE_API_KEYS passed to enhance.py. Defaults to env var if omitted.",
-    )
-    parser.add_argument(
-        "--model-priority",
-        help="Comma-separated MODEL_PRIORITY_LIST passed to enhance.py. Defaults to env var if omitted.",
-    )
-    parser.add_argument(
-        "--runner",
-        default="uv run",
-        help="Command used to execute enhance.py (default: 'uv run').",
-    )
-    args = parser.parse_args()
-
-    data_path = Path(args.data)
+def process_single_file(data_path: Path, args, api_keys: str, model_priority: str) -> None:
     if not data_path.exists():
         raise FileNotFoundError(data_path)
-
-    api_keys = (args.api_keys or os.getenv("GOOGLE_API_KEYS", "")).strip()
-    model_priority = (args.model_priority or os.getenv("MODEL_PRIORITY_LIST", "")).strip()
-    if not api_keys:
-        raise ValueError("GOOGLE_API_KEYS not provided via --api-keys or environment variable.")
-    if not model_priority:
-        raise ValueError("MODEL_PRIORITY_LIST not provided via --model-priority or environment variable.")
 
     entries: List[Dict] = []
     with data_path.open("r", encoding="utf-8") as fh:
@@ -160,6 +140,7 @@ def main() -> None:
         runner=args.runner,
         api_keys=api_keys,
         model_priority=model_priority,
+        skip_probe=args.probe,
     )
 
     updated = 0
@@ -178,8 +159,72 @@ def main() -> None:
             fh.write(json.dumps(paper, ensure_ascii=False) + "\n")
     tmp_path.replace(data_path)
 
-    print(f"Done. Updated {updated} record(s).")
+    print(f"Done. Updated {updated} record(s) in {data_path}.")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Re-enhance ERROR AI entries in JSONL file(s).")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--data", help="Path to a single enhanced JSONL file.")
+    group.add_argument(
+        "--glob",
+        help="Glob pattern for batch processing (e.g. 'data/*_AI_enhanced_Chinese.jsonl'). Processes newest files first.",
+    )
+    parser.add_argument(
+        "--language",
+        default="Chinese",
+        help="Language parameter passed to enhance.py (default: Chinese).",
+    )
+    parser.add_argument(
+        "--api-keys",
+        help="Comma-separated GOOGLE_API_KEYS passed to enhance.py. Defaults to env var if omitted.",
+    )
+    parser.add_argument(
+        "--model-priority",
+        help="Comma-separated MODEL_PRIORITY_LIST passed to enhance.py. Defaults to env var if omitted.",
+    )
+    parser.add_argument(
+        "--runner",
+        default="uv run",
+        help="Command used to execute enhance.py (default: 'uv run').",
+    )
+    parser.add_argument(
+        "--probe",
+        action="store_true",
+        help="Pass --probe to enhance.py to enable connectivity check (recommended in CI/CD).",
+    )
+    args = parser.parse_args()
+
+    api_keys = (args.api_keys or os.getenv("GOOGLE_API_KEYS", "")).strip()
+    model_priority = (args.model_priority or os.getenv("MODEL_PRIORITY_LIST", "")).strip()
+
+    # Require at least one of Google or OpenAI keys to be configured
+    oai_keys = os.getenv("OPENAI_API_KEYS", "").strip()
+    if not api_keys and not oai_keys:
+        raise ValueError(
+            "No API keys configured: set GOOGLE_API_KEYS or OPENAI_API_KEYS "
+            "(or pass --api-keys for Google)."
+        )
+
+    if args.glob:
+        import glob as globmodule
+        files = sorted(globmodule.glob(args.glob), reverse=True)  # newest first
+        if not files:
+            print(f"No files matched glob pattern: {args.glob}")
+            return
+        print(f"Found {len(files)} file(s) to process.")
+        for fp in files:
+            print(f"\n=== Processing: {fp} ===")
+            try:
+                process_single_file(Path(fp), args, api_keys, model_priority)
+            except Exception as e:
+                print(f"[Error] {fp}: {e}, skipping.")
+    else:
+        process_single_file(Path(args.data), args, api_keys, model_priority)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n[Info] Interrupted by user.")

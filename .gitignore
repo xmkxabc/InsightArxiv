@@ -12,3 +12,15 @@ ai/.env
 test/*
 .idea/
 
+# Git worktrees
+.worktrees/
+
+# Temporary/scratch data files (json/txt only; .jsonl kept for pipeline)
+data/_*.json
+data/_*.txt
+
+# Temp directory for re_enhance_errors.py subprocess
+.tmp_enhance/
+
+# Claude Code local config
+.claude/

@@ -1,0 +1,49 @@
+name: Bulk ERROR Repair
+
+on:
+  workflow_dispatch:
+    inputs:
+      glob_pattern:
+        description: 'Glob pattern for files to repair (default: all enhanced files)'
+        required: false
+        default: 'data/*_AI_enhanced_Chinese.jsonl'
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEYS: ${{ secrets.OPENAI_API_KEYS }}
+      OPENAI_BASE_URLS: ${{ vars.OPENAI_BASE_URLS }}
+      OPENAI_MODELS: ${{ vars.OPENAI_MODELS }}
+      OPENAI_RPMS: ${{ vars.OPENAI_RPMS }}
+      OPENAI_RPDS: ${{ vars.OPENAI_RPDS }}
+      GOOGLE_API_KEYS: ${{ secrets.GOOGLE_API_KEYS }}
+      MODEL_PRIORITY_LIST: ${{ vars.MODEL_PRIORITY_LIST }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          uv sync
+
+      - name: Setup Git
+        run: |
+          git config --global user.email "${{ vars.EMAIL }}"
+          git config --global user.name "${{ vars.NAME }}"
+
+      - name: Repair all ERROR records (newest first)
+        run: |
+          source .venv/bin/activate
+          PATTERN="${{ github.event.inputs.glob_pattern }}"
+          echo "Processing files matching: $PATTERN"
+          python ai/re_enhance_errors.py --glob "$PATTERN" --probe
+
+      - name: Commit repaired files
+        run: |
+          git pull origin main --rebase --autostash
+          git add data/*_AI_enhanced_Chinese.jsonl
+          git commit -m "fix(data): re-enhance ERROR records in historical files" || echo "No changes to commit."
+          git push

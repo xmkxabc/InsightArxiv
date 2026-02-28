@@ -24,6 +24,12 @@ jobs:
       API_CALL_INTERVAL: ${{ vars.API_CALL_INTERVAL }}
       LANGUAGE: ${{ vars.LANGUAGE }}
       CATEGORIES: ${{ vars.CATEGORIES }}
+      # 第三方 OpenAI 兼容 API（可选；不设置则跳过 OpenAI 路径）
+      OPENAI_API_KEYS: ${{ secrets.OPENAI_API_KEYS }}
+      OPENAI_BASE_URLS: ${{ vars.OPENAI_BASE_URLS }}
+      OPENAI_MODELS: ${{ vars.OPENAI_MODELS }}
+      OPENAI_RPMS: ${{ vars.OPENAI_RPMS }}
+      OPENAI_RPDS: ${{ vars.OPENAI_RPDS }}
 
     steps:
       - name: Checkout repository
@@ -67,7 +73,7 @@ jobs:
           source .venv/bin/activate
           RAW_JSONL_FILE="${{ steps.fetch.outputs.raw_file }}"
           echo "Enhancing paper data with AI for file: $RAW_JSONL_FILE..."
-          python ai/enhance.py --data "$RAW_JSONL_FILE"
+          python ai/enhance.py --data "$RAW_JSONL_FILE" --probe
           ENHANCED_JSONL_FILE="data/${{ steps.date.outputs.TARGET_DATE }}_AI_enhanced_${LANGUAGE:-Chinese}.jsonl"
           echo "enhanced_file=$ENHANCED_JSONL_FILE" >> $GITHUB_OUTPUT
 
