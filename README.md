@@ -117,20 +117,20 @@ This project is open-sourced under the [MIT License](LICENSE).
 
 ---
 
-## **Latest Bulletin: 2026-08-03**
+## **Latest Bulletin: 2026-08-04**
 
-> [**Read the full report for 2026-08-03...**](./data/2026-08-03.md)
+> [**Read the full report for 2026-08-04...**](./data/2026-08-04.md)
 
 ---
 
 ### **Past 7 Days**
 
+- [2026-08-03](./data/2026-08-03.md)
 - [2026-07-31](./data/2026-07-31.md)
 - [2026-07-30](./data/2026-07-30.md)
 - [2026-07-29](./data/2026-07-29.md)
 - [2026-07-28](./data/2026-07-28.md)
 - [2026-07-27](./data/2026-07-27.md)
-- [2026-07-24](./data/2026-07-24.md)
 
 
 ---
@@ -142,7 +142,7 @@ This project is open-sourced under the [MIT License](LICENSE).
 | Mon | Tue | Wed | Thu | Fri | Sat | Sun |
 |:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 |   |   |   |   |   | 1 | 2 |
-| [3](./data/2026-08-03.md) | 4 | 5 | 6 | 7 | 8 | 9 |
+| [3](./data/2026-08-03.md) | [4](./data/2026-08-04.md) | 5 | 6 | 7 | 8 | 9 |
 | 10 | 11 | 12 | 13 | 14 | 15 | 16 |
 | 17 | 18 | 19 | 20 | 21 | 22 | 23 |
 | 24 | 25 | 26 | 27 | 28 | 29 | 30 |
