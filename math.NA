@@ -1,0 +1,12 @@
+import time
+import logging
+
+def safe_summarize(abstract, retries=3, backoff=2):
+    for attempt in range(retries):
+        try:
+            return call_llm_api(abstract)
+        except Exception as e:
+            logging.warning(f"Attempt {attempt+1} failed: {e}. Retrying in {backoff ** attempt}s...")
+            time.sleep(backoff ** attempt)
+    # Fallback to raw abstract instead of propagating ERROR
+    return {"tldr": abstract[:200], "ai_comments": "Summarization unavailable.", "abstract": abstract}
