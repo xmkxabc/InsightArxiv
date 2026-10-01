@@ -1,5 +1,6 @@
 {
   "availableMonths": [
+    "2026-10",
     "2026-09",
     "2026-08",
     "2026-07",
@@ -20,6 +21,6 @@
     "2025-04",
     "2025-03"
   ],
-  "totalPaperCount": 282155,
-  "lastUpdated": "2026-09-30"
+  "totalPaperCount": 283513,
+  "lastUpdated": "2026-10-01"
 }
