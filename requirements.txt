@@ -46,7 +46,7 @@ dotenv==0.9.9
     # via daily-arxiv (pyproject.toml)
 feedparser==6.0.11
     # via arxiv
-filelock==3.20.1
+filelock==3.20.3
     # via tldextract
 filetype==1.2.0
     # via langchain-google-genai
@@ -107,7 +107,7 @@ jsonpointer==3.0.0
     # via jsonpatch
 langchain==0.3.27
     # via daily-arxiv (pyproject.toml)
-langchain-core==0.3.80
+langchain-core==0.3.81
     # via
     #   langchain
     #   langchain-google-genai
@@ -153,7 +153,7 @@ protobuf==6.31.1
     #   googleapis-common-protos
     #   grpcio-status
     #   proto-plus
-pyasn1==0.6.1
+pyasn1==0.6.2
     # via
     #   pyasn1-modules
     #   rsa
@@ -203,7 +203,7 @@ requests-toolbelt==1.0.0
     # via langsmith
 rsa==4.9.1
     # via google-auth
-scrapy==2.13.3
+scrapy==2.14.1
     # via daily-arxiv (pyproject.toml)
 service-identity==24.2.0
     # via scrapy
@@ -239,7 +239,7 @@ typing-extensions==4.14.1
     #   typing-inspection
 typing-inspection==0.4.1
     # via pydantic
-urllib3==2.6.0
+urllib3==2.6.3
     # via requests
 w3lib==2.3.1
     # via
